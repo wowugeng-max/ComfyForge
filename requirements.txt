@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+gradio
+httpx
+requests
+python-multipart
