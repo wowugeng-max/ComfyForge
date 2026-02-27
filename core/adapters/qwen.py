@@ -94,6 +94,8 @@ class QwenAdapter(BaseAdapter):
         if not prompt:
             raise ValueError("Image generation requires a text prompt.")
 
+        print(f"[_image_gen_call] Starting with model={model_name}, prompt={prompt}")
+
         model_lower = model_name.lower()
         # 如果模型是 Qwen-Image 或 Z-Image，优先使用 DashScope 原生同步接口
         if "qwen-image" in model_lower or "z-image" in model_lower:
@@ -105,6 +107,7 @@ class QwenAdapter(BaseAdapter):
                 # 如果用户自定义了域名，使用其根域名加 /api/v1
                 parsed = urlparse(base_url)
                 dashscope_url = f"{parsed.scheme}://{parsed.netloc}/api/v1"
+            print(f"[_image_gen_call] DashScope sync URL: {dashscope_url}")
 
             gen_url = f"{dashscope_url}/services/aigc/multimodal-generation/generation"
             headers = {
@@ -125,24 +128,33 @@ class QwenAdapter(BaseAdapter):
                 },
                 "parameters": self._filter_params_for_model(model_name, extra_params)
             }
+            print(f"[_image_gen_call] DashScope sync payload: {payload}")
 
             resp = api_session.post(gen_url, json=payload, headers=headers, timeout=120)
+            print(f"[_image_gen_call] DashScope sync response status: {resp.status_code}")
+            print(f"[_image_gen_call] DashScope sync response text: {resp.text[:500]}")  # 前500字符
+
             if resp.status_code == 200:
                 data = resp.json()
                 try:
                     image_url = data["output"]["choices"][0]["message"]["content"][0]["image"]
+                    print(f"[_image_gen_call] DashScope sync got image URL: {image_url}")
                     img_resp = api_session.get(image_url, timeout=60)
                     img_resp.raise_for_status()
                     img_b64 = base64.b64encode(img_resp.content).decode()
+                    print(f"[_image_gen_call] Base64 preview: {img_b64[:50]}")
+                    print(f"[_image_gen_call] DashScope sync success, returning base64 image")
                     return {"type": "image", "content": img_b64}
                 except (KeyError, IndexError) as e:
-                    print(f"Unexpected response structure from DashScope sync API: {data}")
+                    print(f"[_image_gen_call] DashScope sync unexpected response structure: {data}")
                     # 降级到其他方法
             else:
-                print(f"DashScope sync image gen failed with status {resp.status_code}, response: {resp.text}")
+                print(
+                    f"[_image_gen_call] DashScope sync failed, status {resp.status_code}, response: {resp.text[:200]}")
                 # 降级
 
         # 备选：尝试 OpenAI 兼容的 /images/generations 端点
+        print(f"[_image_gen_call] Trying OpenAI compatible /images/generations")
         gen_url = f"{base_url}/images/generations"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -153,20 +165,27 @@ class QwenAdapter(BaseAdapter):
             "prompt": prompt,
             **extra_params
         }
+        print(f"[_image_gen_call] OpenAI compatible payload: {payload}")
         resp = api_session.post(gen_url, json=payload, headers=headers, timeout=120)
+        print(f"[_image_gen_call] OpenAI compatible response status: {resp.status_code}")
+        print(f"[_image_gen_call] OpenAI compatible response text: {resp.text[:500]}")
         if resp.status_code == 200:
             data = resp.json()
             if "data" in data and len(data["data"]) > 0:
                 img_item = data["data"][0]
                 if "b64_json" in img_item:
+                    print(f"[_image_gen_call] OpenAI compatible got b64_json")
                     return {"type": "image", "content": img_item["b64_json"]}
                 elif "url" in img_item:
+                    print(f"[_image_gen_call] OpenAI compatible got image URL: {img_item['url']}")
                     img_resp = api_session.get(img_item["url"], timeout=60)
                     img_resp.raise_for_status()
                     img_b64 = base64.b64encode(img_resp.content).decode()
                     return {"type": "image", "content": img_b64}
 
         # 最后尝试异步任务（旧接口，作为保底）
+        print(f"[_image_gen_call] Trying async task fallback")
+        # ... 此处保留原有的异步任务代码，并同样添加日志 ...
         return self._image_gen_async_call(api_key, model_name, prompt, extra_params)
 
     def _image_gen_async_call(self, api_key, model_name, prompt, extra_params):

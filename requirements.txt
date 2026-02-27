@@ -4,3 +4,8 @@ gradio
 httpx
 requests
 python-multipart
+Pillow
+numpy
+opencv-python
+google-generativeai
+torch

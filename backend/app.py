@@ -31,7 +31,7 @@ class TaskResponse(BaseModel):
     task_id: str
     status: str
 
-@app.post("/api/tasks/direct", response_model=TaskResponse)
+@app.post("/api/tasks/direct")  # 移除 response_model，或者改为动态响应
 async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     task_def = request.dict()
@@ -39,15 +39,16 @@ async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: B
     tasks[task_id] = {"status": "pending", "result": None}
 
     if request.sync:
-        # 同步执行（直接等待）
+        # 同步执行：直接执行并返回结果
         executor = DirectAPIPipelineExecutor()
         result = await executor.execute(task_def)
+        # 可以选择存储结果，但直接返回即可
         tasks[task_id] = {"status": "completed", "result": result}
-        return TaskResponse(task_id=task_id, status="completed")
+        return result  # 直接返回 executor 的结果字典
     else:
-        # 后台执行
+        # 异步执行：后台任务
         background_tasks.add_task(_run_pipeline_background, task_id, task_def)
-        return TaskResponse(task_id=task_id, status="queued")
+        return {"task_id": task_id, "status": "queued"}  # 返回简单状态
 
 async def _run_pipeline_background(task_id: str, task_def: dict):
     executor = DirectAPIPipelineExecutor()
