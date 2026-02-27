@@ -1,0 +1,18 @@
+# Python 编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+
+# IDE 配置
+.idea/
+.vscode/
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
