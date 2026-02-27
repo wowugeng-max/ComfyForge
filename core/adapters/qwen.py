@@ -139,9 +139,25 @@ class QwenAdapter(BaseAdapter):
                 try:
                     image_url = data["output"]["choices"][0]["message"]["content"][0]["image"]
                     print(f"[_image_gen_call] DashScope sync got image URL: {image_url}")
-                    img_resp = api_session.get(image_url, timeout=60)
-                    img_resp.raise_for_status()
-                    img_b64 = base64.b64encode(img_resp.content).decode()
+
+                    import time
+                    from requests.exceptions import RequestException
+
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            img_resp = api_session.get(image_url, timeout=60)
+                            img_resp.raise_for_status()
+                            img_b64 = base64.b64encode(img_resp.content).decode()
+                            break  # 成功则跳出循环
+                        except RequestException as e:
+                            if attempt == max_retries - 1:
+                                # 最后一次重试失败，抛出异常
+                                raise RuntimeError(f"Failed to download image after {max_retries} attempts: {e}")
+                            print(
+                                f"⚠️ Image download failed (attempt {attempt + 1}/{max_retries}): {e}, retrying in 2s...")
+                            time.sleep(2)
+
                     print(f"[_image_gen_call] Base64 preview: {img_b64[:50]}")
                     print(f"[_image_gen_call] DashScope sync success, returning base64 image")
                     return {"type": "image", "content": img_b64}

@@ -4,11 +4,25 @@ from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import uuid
 from .core.executors.direct_api import DirectAPIPipelineExecutor
-
-app = FastAPI(title="ComfyForge API")
+from contextlib import asynccontextmanager
+from .db import init_db  # 确保 init_db 已定义
+from backend.api import assets
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时执行
+    init_db()  # 创建数据库表
+    print("数据库表已初始化")
+    yield
+    # 关闭时执行（可选）
+    print("应用关闭")
+
+app = FastAPI(title="ComfyForge API", lifespan=lifespan)
+# 包含资产路由
+app.include_router(assets.router)
 
 class PipelineStep(BaseModel):
     step: str
