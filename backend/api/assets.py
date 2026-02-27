@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ..db import SessionLocal
-from ..models.asset import Asset
+from ..models import Asset, Project
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -19,6 +19,7 @@ class AssetBase(BaseModel):
     tags: List[str] = []
     data: dict
     thumbnail: Optional[str] = None
+    project_id: Optional[int] = None  # 新增
 
 
 class AssetCreate(AssetBase):
@@ -31,6 +32,7 @@ class AssetUpdate(BaseModel):
     tags: Optional[List[str]] = None
     data: Optional[dict] = None
     thumbnail: Optional[str] = None
+    project_id: Optional[int] = None  # 新增
 
 
 class AssetOut(AssetBase):
@@ -40,6 +42,7 @@ class AssetOut(AssetBase):
     updated_at: datetime
     parent_id: Optional[int] = None
     source_asset_ids: Optional[List[int]] = None  # 新增字段
+    project_id: Optional[int] = None  # 已在基类，但明确列出
 
     class Config:
         from_attributes = True  # SQLAlchemy 2.0 风格，替代 orm_mode
@@ -62,7 +65,8 @@ def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
         description=asset.description,
         tags=asset.tags,
         data=asset.data,
-        thumbnail=asset.thumbnail
+        thumbnail=asset.thumbnail,
+        project_id = asset.project_id  # 新增
     )
     db.add(db_asset)
     db.commit()
@@ -72,17 +76,19 @@ def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[AssetOut])
 def list_assets(
-        skip: int = Query(0, ge=0),
-        limit: int = Query(100, ge=1, le=1000),
-        type: Optional[str] = None,
-        db: Session = Depends(get_db)
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    type: Optional[str] = None,
+    project_id: Optional[int] = None,  # 新增
+    db: Session = Depends(get_db)
 ):
     query = db.query(Asset)
     if type:
         query = query.filter(Asset.type == type)
+    if project_id is not None:
+        query = query.filter(Asset.project_id == project_id)
     assets = query.offset(skip).limit(limit).all()
     return assets
-
 
 @router.get("/{asset_id}", response_model=AssetOut)
 def get_asset(asset_id: int, db: Session = Depends(get_db)):
@@ -109,6 +115,7 @@ def update_asset(asset_id: int, asset_update: AssetUpdate, db: Session = Depends
         tags=asset_update.tags if asset_update.tags is not None else original.tags,
         data=asset_update.data if asset_update.data is not None else original.data,
         thumbnail=asset_update.thumbnail if asset_update.thumbnail is not None else original.thumbnail,
+        project_id=asset_update.project_id if asset_update.project_id is not None else original.project_id,  # 新增
         version=original.version + 1,
         parent_id=original.id,  # 指向原资产
         source_asset_ids=original.source_asset_ids,

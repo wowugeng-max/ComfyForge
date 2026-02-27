@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from .db import init_db  # 确保 init_db 已定义
 from backend.api import assets
 from .core.asset_utils import save_image_from_base64
+from .api import assets, projects
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ComfyForge API", lifespan=lifespan)
 # 包含资产路由
 app.include_router(assets.router)
+app.include_router(projects.router)  # 新增
 
 class PipelineStep(BaseModel):
     step: str
