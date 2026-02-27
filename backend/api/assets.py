@@ -39,6 +39,7 @@ class AssetOut(AssetBase):
     created_at: datetime
     updated_at: datetime
     parent_id: Optional[int] = None
+    source_asset_ids: Optional[List[int]] = None  # 新增字段
 
     class Config:
         from_attributes = True  # SQLAlchemy 2.0 风格，替代 orm_mode
@@ -91,19 +92,32 @@ def get_asset(asset_id: int, db: Session = Depends(get_db)):
     return asset
 
 
+# backend/api/assets.py (部分修改)
+
 @router.put("/{asset_id}", response_model=AssetOut)
 def update_asset(asset_id: int, asset_update: AssetUpdate, db: Session = Depends(get_db)):
-    asset = db.query(Asset).filter(Asset.id == asset_id).first()
-    if not asset:
+    # 查询原资产
+    original = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not original:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    update_data = asset_update.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(asset, field, value)
-
+    # 创建新版本
+    new_asset = Asset(
+        type=original.type,
+        name=asset_update.name if asset_update.name is not None else original.name,
+        description=asset_update.description if asset_update.description is not None else original.description,
+        tags=asset_update.tags if asset_update.tags is not None else original.tags,
+        data=asset_update.data if asset_update.data is not None else original.data,
+        thumbnail=asset_update.thumbnail if asset_update.thumbnail is not None else original.thumbnail,
+        version=original.version + 1,
+        parent_id=original.id,  # 指向原资产
+        source_asset_ids=original.source_asset_ids,
+        file_path=original.file_path
+    )
+    db.add(new_asset)
     db.commit()
-    db.refresh(asset)
-    return asset
+    db.refresh(new_asset)
+    return new_asset
 
 
 @router.delete("/{asset_id}", status_code=204)

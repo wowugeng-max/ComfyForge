@@ -7,6 +7,7 @@ from .core.executors.direct_api import DirectAPIPipelineExecutor
 from contextlib import asynccontextmanager
 from .db import init_db  # 确保 init_db 已定义
 from backend.api import assets
+from .core.asset_utils import save_image_from_base64
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -45,7 +46,7 @@ class TaskResponse(BaseModel):
     task_id: str
     status: str
 
-@app.post("/api/tasks/direct")  # 移除 response_model，或者改为动态响应
+@app.post("/api/tasks/direct")
 async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     task_def = request.dict()
@@ -53,12 +54,36 @@ async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: B
     tasks[task_id] = {"status": "pending", "result": None}
 
     if request.sync:
-        # 同步执行：直接执行并返回结果
         executor = DirectAPIPipelineExecutor()
         result = await executor.execute(task_def)
-        # 可以选择存储结果，但直接返回即可
+        # 保存图像资产并记录血缘
+        visited_ids = result.get("visited_asset_ids", [])
+        outputs = result.get("outputs", {})
+        created_asset_ids = {}
+
+        # 获取数据库会话
+        from .db import SessionLocal
+        db = SessionLocal()
+        try:
+            for key, value in outputs.items():
+                # 判断是否为图像 base64
+                if isinstance(value, str) and len(value) > 100:
+                    # 检查常见的图像 base64 头
+                    if value.startswith("iVBOR") or value.startswith("/9j/") or value.startswith("data:image"):
+                        try:
+                            asset_id = save_image_from_base64(value, db, source_ids=visited_ids)
+                            created_asset_ids[key] = asset_id
+                            # 可选择将 outputs 中的值替换为资产 ID 或文件路径，但前端可能期望 base64
+                            # 这里保持原样，同时返回创建的资产 ID 列表
+                        except Exception as e:
+                            print(f"Failed to save image for {key}: {e}")
+        finally:
+            db.close()
+
+        # 将创建的资产 ID 加入结果，供前端参考
+        result["created_assets"] = created_asset_ids
         tasks[task_id] = {"status": "completed", "result": result}
-        return result  # 直接返回 executor 的结果字典
+        return result
     else:
         # 异步执行：后台任务
         background_tasks.add_task(_run_pipeline_background, task_id, task_def)
