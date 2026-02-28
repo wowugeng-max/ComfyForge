@@ -5,6 +5,7 @@ import base64
 from PIL import Image
 import io
 from frontend.forms import prompt_form, character_form  # 导入模块
+from frontend.tabs import video_workshop
 
 BACKEND_URL = "http://localhost:8000"
 
@@ -204,6 +205,41 @@ def detach_asset_from_project(asset_id):
 with gr.Blocks(title="ComfyForge") as demo:
     gr.Markdown("# ComfyForge 智能创作助理")
 
+    # 图像生成管道选项卡
+    with gr.Tab("图像生成管道"):
+        with gr.Row():
+            with gr.Column():
+                pipeline_input = gr.Textbox(
+                    label="管道定义 (JSON)",
+                    lines=10,
+                    value=json.dumps([
+                        {
+                            "step": "image",
+                            "provider": "Qwen",
+                            "model": "z-image-turbo",
+                            "prompt": "霓虹雨夜，机械又暖，冷艳黑盔行未央城",
+                            "output_var": "character_img"
+                        }
+                    ], indent=2, ensure_ascii=False)
+                )
+                api_keys_input = gr.Textbox(
+                    label="API Keys (JSON)",
+                    lines=5,
+                    value=json.dumps({
+                        "Qwen": "sk-3a209363921e4cdd969958d48e00e3df"
+                    }, indent=2)
+                )
+                run_btn = gr.Button("运行")
+        with gr.Row():
+            output_text = gr.Textbox(label="原始响应", lines=20)
+            output_image = gr.Image(label="生成的图像", type="pil")
+
+        run_btn.click(
+            fn=run_pipeline,
+            inputs=[pipeline_input, api_keys_input],
+            outputs=[output_text, output_image]
+        )
+
     # 资产管理选项卡（重构）
     with gr.Tab("资产管理"):
         with gr.Row():
@@ -359,6 +395,8 @@ with gr.Blocks(title="ComfyForge") as demo:
             inputs=[filter_type, project_dropdown],
             outputs=asset_list
         )
+
+    video_workshop.create_tab()
 
 if __name__ == "__main__":
     demo.launch(server_port=7860)

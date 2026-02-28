@@ -41,9 +41,27 @@ class CharacterData(BaseModel):
     #     # 实际使用时可在 API 层查询数据库
     #     return v
 
+# ---------- VIDEO 资产 ----------
+class VideoData(BaseModel):
+    file_path: str
+    width: int
+    height: int
+    duration: float  # 视频时长（秒）
+    fps: float  # 帧率
+    format: str  # 如 "mp4"
+    original_base64_preview: Optional[str] = None  # 首帧预览
+
+    @validator('width', 'height', 'duration', 'fps')
+    def positive_numbers(cls, v):
+        if v <= 0:
+            raise ValueError('width, height, duration, fps must be positive')
+        return v
+
+
 # 资产类型到验证模型的映射（用于动态选择）
 ASSET_DATA_SCHEMAS = {
     'prompt': PromptData,
     'image': ImageData,
     'character': CharacterData,
+    'video': VideoData,   # 新增
 }

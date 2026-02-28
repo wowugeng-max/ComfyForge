@@ -9,6 +9,7 @@ from .db import init_db  # 确保 init_db 已定义
 from backend.api import assets
 from .core.asset_utils import save_image_from_base64
 from .api import assets, projects
+from .core.executors.video_loop import VideoLoopExecutor
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -102,3 +103,13 @@ async def _run_pipeline_background(task_id: str, task_def: dict):
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
     return tasks.get(task_id, {"status": "not found"})
+
+@app.post("/api/tasks/video_loop")
+async def run_video_loop(request: dict):
+    print("视频循环端点被调用")  # 添加调试输出
+    executor = VideoLoopExecutor()
+    try:
+        result = await executor.execute(request)
+        return result
+    except Exception as e:
+        return {"error": str(e)}

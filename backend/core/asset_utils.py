@@ -8,10 +8,14 @@ from PIL import Image
 import io
 from sqlalchemy.orm import Session
 from ..models.asset import Asset
+from ..models.schemas import VideoData
 
 # 配置图像存储目录
 IMAGES_DIR = "data/assets/images"
 os.makedirs(IMAGES_DIR, exist_ok=True)
+
+VIDEOS_DIR = "data/assets/videos"
+os.makedirs(VIDEOS_DIR, exist_ok=True)
 
 
 def save_image_from_base64(base64_str: str, db: Session, source_ids: list = None) -> int:
@@ -87,4 +91,64 @@ def save_image_from_base64(base64_str: str, db: Session, source_ids: list = None
     db.commit()
     db.refresh(asset)
 
+    return asset.id
+
+
+def get_video_info(file_path: str):
+    """使用 ffprobe 获取视频信息"""
+    import json
+    cmd = [
+        'ffprobe', '-v', 'quiet', '-print_format', 'json',
+        '-show_streams', file_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    info = json.loads(result.stdout)
+    video_stream = next(s for s in info['streams'] if s['codec_type'] == 'video')
+    width = int(video_stream['width'])
+    height = int(video_stream['height'])
+    duration = float(video_stream.get('duration', 0))
+    fps_parts = video_stream.get('r_frame_rate', '30/1').split('/')
+    fps = int(fps_parts[0]) / int(fps_parts[1]) if len(fps_parts) == 2 else 30.0
+    return width, height, duration, fps
+
+
+def save_video_as_asset(video_path: str, db, name=None, source_ids=None, project_id=None):
+    """保存视频文件为资产，并记录血缘"""
+    # 生成唯一文件名
+    ext = os.path.splitext(video_path)[1]
+    new_filename = f"{uuid.uuid4().hex}{ext}"
+    new_path = os.path.join(VIDEOS_DIR, new_filename)
+
+    # 复制或移动文件（这里用复制）
+    import shutil
+    shutil.copy2(video_path, new_path)
+
+    # 获取视频信息
+    width, height, duration, fps = get_video_info(new_path)
+
+    # 构造 data 字段
+    data = VideoData(
+        file_path=new_path,
+        width=width,
+        height=height,
+        duration=duration,
+        fps=fps,
+        format=ext[1:].lower()
+    ).dict()
+
+    # 创建资产记录
+    asset = Asset(
+        type="video",
+        name=name or f"Video {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        description="Automatically saved from pipeline output",
+        tags=[],
+        data=data,
+        thumbnail=None,
+        source_asset_ids=source_ids or [],
+        file_path=new_path,
+        project_id=project_id
+    )
+    db.add(asset)
+    db.commit()
+    db.refresh(asset)
     return asset.id
