@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ..db import SessionLocal
 from ..models import Asset, Project
+from ..models.schemas import ASSET_DATA_SCHEMAS
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -34,6 +35,9 @@ class AssetUpdate(BaseModel):
     thumbnail: Optional[str] = None
     project_id: Optional[int] = None  # 新增
 
+class ProjectUpdate(BaseModel):
+    project_id: Optional[int] = None
+
 
 class AssetOut(AssetBase):
     id: int
@@ -59,14 +63,25 @@ def get_db():
 
 @router.post("/", response_model=AssetOut)
 def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
+    # 验证 data 字段
+    schema = ASSET_DATA_SCHEMAS.get(asset.type)
+    if schema:
+        try:
+            validated_data = schema(**asset.data).dict()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"数据格式错误: {e}")
+    else:
+        # 未知类型，可放行或报错，这里选择放行并记录日志
+        validated_data = asset.data
+
     db_asset = Asset(
         type=asset.type,
         name=asset.name,
         description=asset.description,
         tags=asset.tags,
-        data=asset.data,
+        data=validated_data,
         thumbnail=asset.thumbnail,
-        project_id = asset.project_id  # 新增
+        project_id=asset.project_id
     )
     db.add(db_asset)
     db.commit()
@@ -102,22 +117,31 @@ def get_asset(asset_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{asset_id}", response_model=AssetOut)
 def update_asset(asset_id: int, asset_update: AssetUpdate, db: Session = Depends(get_db)):
-    # 查询原资产
     original = db.query(Asset).filter(Asset.id == asset_id).first()
     if not original:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    # 创建新版本
+    # 如果更新了 data，需要验证
+    new_data = asset_update.data if asset_update.data is not None else original.data
+    schema = ASSET_DATA_SCHEMAS.get(original.type)
+    if schema and asset_update.data is not None:
+        try:
+            validated_data = schema(**new_data).dict()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"数据格式错误: {e}")
+    else:
+        validated_data = new_data
+
     new_asset = Asset(
         type=original.type,
         name=asset_update.name if asset_update.name is not None else original.name,
         description=asset_update.description if asset_update.description is not None else original.description,
         tags=asset_update.tags if asset_update.tags is not None else original.tags,
-        data=asset_update.data if asset_update.data is not None else original.data,
+        data=validated_data,
         thumbnail=asset_update.thumbnail if asset_update.thumbnail is not None else original.thumbnail,
-        project_id=asset_update.project_id if asset_update.project_id is not None else original.project_id,  # 新增
+        project_id=asset_update.project_id if asset_update.project_id is not None else original.project_id,
         version=original.version + 1,
-        parent_id=original.id,  # 指向原资产
+        parent_id=original.id,
         source_asset_ids=original.source_asset_ids,
         file_path=original.file_path
     )
@@ -125,6 +149,21 @@ def update_asset(asset_id: int, asset_update: AssetUpdate, db: Session = Depends
     db.commit()
     db.refresh(new_asset)
     return new_asset
+
+@router.patch("/{asset_id}/project", response_model=AssetOut)
+def update_asset_project(
+    asset_id: int,
+    update: ProjectUpdate,  # 使用 Pydantic 模型接收请求体
+    db: Session = Depends(get_db)
+):
+    print(f"PATCH called with asset_id={asset_id}, project_id={update.project_id}")
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    asset.project_id = update.project_id
+    db.commit()
+    db.refresh(asset)
+    return asset
 
 
 @router.delete("/{asset_id}", status_code=204)

@@ -4,9 +4,9 @@ import json
 import base64
 from PIL import Image
 import io
+from frontend.forms import prompt_form, character_form  # 导入模块
 
 BACKEND_URL = "http://localhost:8000"
-
 
 # ========== 图像生成管道部分 ==========
 def run_pipeline(pipeline_json, api_keys_json):
@@ -105,11 +105,33 @@ def load_assets(type_filter="", project_id=None):
         return [{"error": str(e)}]
 
 
-def save_asset(ast_type, name, desc, tags_str, data_json, thumbnail, project_id):
-    """保存资产，支持项目 ID"""
+def save_asset(ast_type, name, desc, tags_str,
+               # 通用 JSON 数据（用于 prompt 等）
+               data_json, thumbnail, project_id,
+               # 角色专用参数
+               core_prompt="", images_str="", lora_path="", variants_json="{}"):
+    """保存资产，支持多种资产类型"""
     try:
         tags = [t.strip() for t in tags_str.split(",") if t.strip()]
-        data = json.loads(data_json) if data_json.strip() else {}
+        data = {}
+
+        if ast_type == "prompt":
+            data = json.loads(data_json) if data_json.strip() else {}
+        elif ast_type == "character":
+            # 处理图片列表
+            images = [img.strip() for img in images_str.split(",") if img.strip()]
+            # 处理变体 JSON
+            variants = json.loads(variants_json) if variants_json.strip() else {}
+            data = {
+                "core_prompt": core_prompt,
+                "images": images,
+                "lora": lora_path if lora_path else None,
+                "variants": variants
+            }
+        else:
+            # 其他类型仍使用通用 JSON
+            data = json.loads(data_json) if data_json.strip() else {}
+
     except json.JSONDecodeError as e:
         return f"数据 JSON 格式错误: {e}"
 
@@ -144,13 +166,14 @@ def delete_asset(asset_id):
 
 
 def assign_asset_to_project(asset_id, project_id):
-    """将资产分配到指定项目"""
+    """将资产分配到指定项目，使用 PATCH 端点"""
+    print(f"分配资产：asset_id={asset_id}, project_id_str={project_id}")
     if not asset_id:
         return "请填写资产ID"
-    if not project_id:
-        return "请填写目标项目ID"
+    if project_id is None or project_id <= 0:
+        return "请填写有效的目标项目ID（必须为正整数）"
     try:
-        resp = requests.put(f"{BACKEND_URL}/api/assets/{asset_id}", json={
+        resp = requests.patch(f"{BACKEND_URL}/api/assets/{asset_id}/project", json={
             "project_id": project_id
         })
         if resp.status_code == 200:
@@ -162,11 +185,11 @@ def assign_asset_to_project(asset_id, project_id):
 
 
 def detach_asset_from_project(asset_id):
-    """将资产从项目中剥离（project_id 设为 null）"""
+    """将资产从项目中剥离（project_id 设为 null），使用 PATCH 端点"""
     if not asset_id:
         return "请填写资产ID"
     try:
-        resp = requests.put(f"{BACKEND_URL}/api/assets/{asset_id}", json={
+        resp = requests.patch(f"{BACKEND_URL}/api/assets/{asset_id}/project", json={
             "project_id": None
         })
         if resp.status_code == 200:
@@ -181,45 +204,10 @@ def detach_asset_from_project(asset_id):
 with gr.Blocks(title="ComfyForge") as demo:
     gr.Markdown("# ComfyForge 智能创作助理")
 
-    # 图像生成管道选项卡
-    with gr.Tab("图像生成管道"):
-        with gr.Row():
-            with gr.Column():
-                pipeline_input = gr.Textbox(
-                    label="管道定义 (JSON)",
-                    lines=10,
-                    value=json.dumps([
-                        {
-                            "step": "image",
-                            "provider": "Qwen",
-                            "model": "z-image-turbo",
-                            "prompt": "霓虹雨夜，机械又暖，冷艳黑盔行未央城",
-                            "output_var": "character_img"
-                        }
-                    ], indent=2, ensure_ascii=False)
-                )
-                api_keys_input = gr.Textbox(
-                    label="API Keys (JSON)",
-                    lines=5,
-                    value=json.dumps({
-                        "Qwen": "sk-3a209363921e4cdd969958d48e00e3df"
-                    }, indent=2)
-                )
-                run_btn = gr.Button("运行")
-        with gr.Row():
-            output_text = gr.Textbox(label="原始响应", lines=20)
-            output_image = gr.Image(label="生成的图像", type="pil")
-
-        run_btn.click(
-            fn=run_pipeline,
-            inputs=[pipeline_input, api_keys_input],
-            outputs=[output_text, output_image]
-        )
-
-    # 资产管理选项卡
+    # 资产管理选项卡（重构）
     with gr.Tab("资产管理"):
         with gr.Row():
-            # 左侧：项目管理区域
+            # 左侧：项目管理区域（保持不变）
             with gr.Column(scale=1):
                 gr.Markdown("### 项目管理")
                 refresh_projects_btn = gr.Button("刷新项目列表")
@@ -249,26 +237,42 @@ with gr.Blocks(title="ComfyForge") as demo:
                 asset_list = gr.JSON(label="资产列表")
 
                 gr.Markdown("#### 新建资产")
-                asset_type = gr.Dropdown(
-                    ["prompt", "character", "workflow", "image", "video", "lora"],
-                    label="资产类型",
-                    value="prompt"
-                )
+                # 通用字段
                 asset_name = gr.Textbox(label="资产名称")
                 asset_desc = gr.Textbox(label="描述")
                 asset_tags = gr.Textbox(label="标签 (用逗号分隔)", value="")
-                asset_data = gr.Textbox(label="资产数据 (JSON)", lines=5, value="{}")
                 asset_thumbnail = gr.Textbox(label="缩略图 (路径或base64，可选)")
-                gr.Markdown("资产将归属于当前选中的项目（可选）")
-                save_asset_btn = gr.Button("保存资产")
-                save_asset_result = gr.Textbox(label="保存结果", interactive=False)
 
+                # 资产类型选择
+                asset_type = gr.Radio(
+                    ["prompt", "character"],  # 后续可动态从模块列表生成
+                    label="资产类型",
+                    value="prompt"
+                )
+
+                # 创建表单列（通过模块生成）
+                prompt_col = prompt_form.create_form(asset_name, asset_desc, asset_tags, asset_thumbnail, project_dropdown)
+                character_col = character_form.create_form(asset_name, asset_desc, asset_tags, asset_thumbnail, project_dropdown)
+
+                # 控制可见性
+                def update_form(atype):
+                    return [
+                        gr.update(visible=(atype == "prompt")),
+                        gr.update(visible=(atype == "character"))
+                    ]
+                asset_type.change(
+                    fn=update_form,
+                    inputs=asset_type,
+                    outputs=[prompt_col, character_col]
+                )
+
+                # 删除资产功能（保持不变）
                 with gr.Row():
                     delete_id = gr.Number(label="要删除的资产ID", precision=0)
                     delete_asset_btn = gr.Button("删除资产")
                     delete_asset_result = gr.Textbox(label="删除结果", interactive=False)
 
-                # 新增：资产分配/剥离功能区
+                # 分配/剥离功能（保持不变）
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### 分配资产到项目")
@@ -283,13 +287,11 @@ with gr.Blocks(title="ComfyForge") as demo:
                         detach_btn = gr.Button("剥离资产")
                         detach_result = gr.Textbox(label="剥离结果", interactive=False)
 
-
         # ===== 事件绑定 =====
-        # 项目相关
+        # 项目相关（保持不变）
         def refresh_projects_and_dropdown():
             projects, dropdown = load_projects()
             return projects, dropdown
-
 
         refresh_projects_btn.click(
             fn=refresh_projects_and_dropdown,
@@ -305,11 +307,9 @@ with gr.Blocks(title="ComfyForge") as demo:
             outputs=[project_list, project_dropdown]
         )
 
-
-        # 资产相关
+        # 资产列表刷新
         def load_assets_with_project(type_filter, project_dd_value):
             return load_assets(type_filter=type_filter, project_id=project_dd_value)
-
 
         refresh_assets_btn.click(
             fn=load_assets_with_project,
@@ -317,21 +317,7 @@ with gr.Blocks(title="ComfyForge") as demo:
             outputs=asset_list
         )
 
-
-        def save_asset_with_project(ast_type, name, desc, tags_str, data_json, thumbnail, project_dd_value):
-            return save_asset(ast_type, name, desc, tags_str, data_json, thumbnail, project_dd_value)
-
-
-        save_asset_btn.click(
-            fn=save_asset_with_project,
-            inputs=[asset_type, asset_name, asset_desc, asset_tags, asset_data, asset_thumbnail, project_dropdown],
-            outputs=save_asset_result
-        ).then(
-            fn=load_assets_with_project,
-            inputs=[filter_type, project_dropdown],
-            outputs=asset_list
-        )
-
+        # 删除资产
         delete_asset_btn.click(
             fn=delete_asset,
             inputs=delete_id,

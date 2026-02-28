@@ -1,0 +1,49 @@
+# backend/models/schemas.py
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional, Dict, Any
+
+# ---------- Prompt 资产 ----------
+class PromptData(BaseModel):
+    content: str
+    negative: Optional[str] = None
+
+    # 可添加自定义验证，例如 content 不能为空
+    @validator('content')
+    def content_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('prompt content cannot be empty')
+        return v.strip()
+
+# ---------- Image 资产 ----------
+class ImageData(BaseModel):
+    file_path: str
+    width: int
+    height: int
+    format: str
+    original_base64_preview: Optional[str] = None  # 预览用，可不存完整
+
+    @validator('width', 'height')
+    def positive_dimensions(cls, v):
+        if v <= 0:
+            raise ValueError('width and height must be positive')
+        return v
+
+# ---------- Character 资产 ----------
+class CharacterData(BaseModel):
+    core_prompt_asset_id: int
+    image_asset_ids: List[int] = Field(default_factory=list)
+    lora_asset_id: Optional[int] = None
+    variants: Dict[str, int] = Field(default_factory=dict)  # 变体名称 -> prompt 资产 ID
+
+    # 可选：验证 core_prompt_asset_id 对应的资产是否存在（需要传入 db，这里留空，可在上层处理）
+    # @validator('core_prompt_asset_id')
+    # def check_asset_exists(cls, v):
+    #     # 实际使用时可在 API 层查询数据库
+    #     return v
+
+# 资产类型到验证模型的映射（用于动态选择）
+ASSET_DATA_SCHEMAS = {
+    'prompt': PromptData,
+    'image': ImageData,
+    'character': CharacterData,
+}
