@@ -15,6 +15,9 @@ from .api import keys
 import asyncio
 from .core.key_monitor import start_key_monitor
 from .core.executors.real_video_loop import RealVideoLoopExecutor
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+import os
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -42,6 +45,14 @@ async def lifespan(app: FastAPI):
     print("应用关闭，Key监控已停止")
 
 app = FastAPI(title="ComfyForge API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # 允许前端开发服务器地址
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有方法（包括 OPTIONS）
+    allow_headers=["*"],
+)
 # 包含资产路由
 app.include_router(assets.router)
 app.include_router(projects.router)  # 新增
@@ -162,3 +173,14 @@ async def run_real_video_loop(request: dict):
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+
+@app.get("/api/files/{file_path:path}")
+async def get_file(file_path: str):
+    # 安全限制：只允许访问 data/temp 目录
+    base_dir = os.path.abspath("data/temp")
+    full_path = os.path.abspath(os.path.join(base_dir, file_path))
+    if not full_path.startswith(base_dir):
+        return {"error": "Invalid path"}, 400
+    if not os.path.exists(full_path):
+        return {"error": "File not found"}, 404
+    return FileResponse(full_path)
