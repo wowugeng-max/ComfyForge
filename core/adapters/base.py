@@ -1,15 +1,20 @@
+# core/adapters/base.py
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from ..utils import get_model_capability, ModelCapability
 
 class BaseAdapter(ABC):
+    def __init__(self):
+        self.api_key = None
 
+    def set_api_key(self, api_key: str):
+        """设置API Key（用于从数据库自动注入）"""
+        self.api_key = api_key
 
     def get_capability(self, model_name: str, provider: str = "") -> ModelCapability:
         """获取模型能力，子类可覆盖以定制规则"""
         return get_model_capability(model_name, provider)
 
-        """所有平台适配器的抽象基类"""
     @abstractmethod
     def call(self, ai_config: Dict[str, Any], system_prompt: Optional[str],
              parts: List[Dict[str, Any]], temperature: float, seed: int) -> Dict[str, Any]:

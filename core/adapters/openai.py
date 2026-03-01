@@ -8,7 +8,10 @@ class OpenAIAdapter(BaseAdapter):
     provider_name = "OpenAI"  # 也可用于自动发现
 
     def call(self, ai_config, system_prompt, parts, temperature, seed):
-        api_key = ai_config["api_key"]
+        # 优先使用通过 set_api_key 注入的 Key，否则使用 ai_config 中的
+        api_key = self.api_key or ai_config.get("api_key")
+        if not api_key:
+            raise ValueError("No API Key provided for OpenAi")
         model_name = ai_config["model_name"]
         extra_params = ai_config.get("extra_params", {})
         base_url = ai_config.get("custom_base_url") or "https://api.openai.com/v1/chat/completions"

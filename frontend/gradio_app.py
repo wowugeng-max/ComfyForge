@@ -6,6 +6,7 @@ from PIL import Image
 import io
 from frontend.forms import prompt_form, character_form  # 导入模块
 from frontend.tabs import video_workshop
+from frontend.tabs import key_manager
 
 BACKEND_URL = "http://localhost:8000"
 
@@ -397,6 +398,7 @@ with gr.Blocks(title="ComfyForge") as demo:
         )
 
     video_workshop.create_tab()
+    key_manager.create_tab()
 
 if __name__ == "__main__":
     demo.launch(server_port=7860)

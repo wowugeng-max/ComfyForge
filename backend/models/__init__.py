@@ -6,3 +6,4 @@ Base = declarative_base()
 # 导入所有模型，确保它们注册到 Base
 from .asset import Asset
 from .project import Project
+from .api_key import APIKey  # 新增

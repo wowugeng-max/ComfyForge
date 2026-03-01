@@ -10,6 +10,8 @@ from backend.api import assets
 from .core.asset_utils import save_image_from_base64
 from .api import assets, projects
 from .core.executors.video_loop import VideoLoopExecutor
+from .core.executors.cloud_video_loop import CloudVideoLoopExecutor
+from .api import keys
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -27,6 +29,7 @@ app = FastAPI(title="ComfyForge API", lifespan=lifespan)
 # 包含资产路由
 app.include_router(assets.router)
 app.include_router(projects.router)  # 新增
+app.include_router(keys.router)
 
 class PipelineStep(BaseModel):
     step: str
@@ -113,3 +116,22 @@ async def run_video_loop(request: dict):
         return result
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.post("/api/tasks/cloud_video_loop")
+async def run_cloud_video_loop(request: dict):
+    """云端视频循环生成"""
+    # 从配置中读取RunningHub信息（建议从环境变量或数据库读取）
+    cloud_config = {
+        "base_url": "https://www.runninghub.cn/proxy/your-api-key",  # 替换为你的实际地址
+        "api_key": None,
+        "workflow_template_id": "wan_video_loop_template"
+    }
+
+    executor = CloudVideoLoopExecutor(cloud_config)
+    try:
+        result = await executor.execute(request)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
