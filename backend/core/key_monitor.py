@@ -1,6 +1,7 @@
 # backend/core/key_monitor.py
 import asyncio
 import logging
+import time  # 新增导入
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from ..db import SessionLocal
@@ -10,25 +11,34 @@ from .key_tester import test_key
 logger = logging.getLogger(__name__)
 
 async def check_keys_once():
-    """执行一次Key检查"""
+    """执行一次Key检查，更新有效性和剩余配额，并测量延迟"""
     db = SessionLocal()
     try:
-        # 检查所有活跃Key（包括即将过期的）
+        # 检查所有活跃Key
         keys = db.query(APIKey).filter(APIKey.is_active == True).all()
         for key in keys:
             # 如果上次检查时间在最近1小时内，跳过（可选）
             if key.last_checked and (datetime.utcnow() - key.last_checked) < timedelta(hours=1):
                 continue
+            # 测量延迟
+            start = time.time()
             result = test_key(key.provider, key.key)
+            latency = (time.time() - start) * 1000  # ms
             if result["valid"]:
                 key.is_active = True
                 key.failure_count = 0
                 if result.get("quota_remaining") is not None:
                     key.quota_remaining = result["quota_remaining"]
+                # 更新平均延迟
+                if key.avg_latency == 0:
+                    key.avg_latency = latency
+                else:
+                    key.avg_latency = 0.9 * key.avg_latency + 0.1 * latency
             else:
                 key.failure_count += 1
                 if key.failure_count >= 3:
                     key.is_active = False
+                # 失败时可以不更新平均延迟，或也计入（这里不更新）
             key.last_checked = datetime.utcnow()
             db.commit()
     except Exception as e:
@@ -46,8 +56,8 @@ def run_key_monitor_in_thread(interval_minutes=60):
     """用于在后台线程中运行的包装函数"""
     asyncio.run(start_key_monitor(interval_minutes))
 
-
 async def check_all_keys():
+    """批量检查所有Key（保留原有函数）"""
     db = SessionLocal()
     try:
         keys = db.query(APIKey).filter(APIKey.is_active == True).all()

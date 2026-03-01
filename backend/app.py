@@ -14,6 +14,7 @@ from .core.executors.cloud_video_loop import CloudVideoLoopExecutor
 from .api import keys
 import asyncio
 from .core.key_monitor import start_key_monitor
+from .core.executors.real_video_loop import RealVideoLoopExecutor
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -150,3 +151,14 @@ async def run_cloud_video_loop(request: dict):
     except Exception as e:
         return {"error": str(e)}
 
+@app.post("/api/tasks/real_video_loop")
+async def run_real_video_loop(request: dict):
+    """真实本地视频循环生成（使用工作流模板）"""
+    executor = RealVideoLoopExecutor(ffmpeg_path=r"D:\ffmpeg\ffmpeg-2026-02-26\bin\ffmpeg.exe")
+    try:
+        result = await executor.execute(request)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}

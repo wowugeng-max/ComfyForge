@@ -57,6 +57,23 @@ class VideoData(BaseModel):
             raise ValueError('width, height, duration, fps must be positive')
         return v
 
+# ---------- Workflow 资产 ----------
+class WorkflowData(BaseModel):
+    workflow_json: Dict[str, Any] = Field(..., description="完整的 ComfyUI 工作流 JSON")
+    parameters: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="参数定义，例如：{'positive_prompt': {'node_id': '6', 'field': 'inputs/strings'}}"
+    )
+    thumbnail_node_id: Optional[str] = Field(
+        None,
+        description="用于预览的节点 ID，可以是图像输出节点"
+    )
+
+    @validator('workflow_json')
+    def validate_workflow_json(cls, v):
+        if not isinstance(v, dict):
+            raise ValueError("workflow_json must be a dictionary")
+        return v
 
 # 资产类型到验证模型的映射（用于动态选择）
 ASSET_DATA_SCHEMAS = {
@@ -64,4 +81,5 @@ ASSET_DATA_SCHEMAS = {
     'image': ImageData,
     'character': CharacterData,
     'video': VideoData,   # 新增
+    'workflow': WorkflowData,  # 新增
 }

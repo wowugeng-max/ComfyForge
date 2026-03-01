@@ -3,6 +3,8 @@ import importlib
 import pkgutil
 import inspect
 from .base import BaseAdapter
+from backend.core.router import KeyRouter, RoutingStrategy  # 新增导入
+from datetime import datetime
 
 class AdapterFactory:
     _adapters = {}  # provider -> adapter_class
@@ -17,8 +19,8 @@ class AdapterFactory:
         return wrapper
 
     @classmethod
-    def get_adapter(cls, provider: str, db_session=None):
-        """获取适配器实例，自动从数据库选择最佳Key并注入"""
+    def get_adapter(cls, provider: str, db_session=None, strategy: str = RoutingStrategy.BALANCED):
+        """获取适配器实例，通过路由引擎选择最佳 Key 并注入"""
         if not cls._adapters:
             cls._discover_adapters()
         adapter_class = cls._adapters.get(provider)
@@ -26,13 +28,11 @@ class AdapterFactory:
             raise ValueError(f"Unsupported provider: {provider}")
 
         adapter = adapter_class()
+        adapter.key_id = None  # 初始化 key_id
 
-        # 尝试从数据库获取可用Key
+        # 路由选择 Key
         try:
-            from backend.models.api_key import APIKey
-            from sqlalchemy.orm import Session
             if db_session is None:
-                # 如果没有传入session，创建一个临时会话（注意需自行关闭）
                 from backend.db import SessionLocal
                 db = SessionLocal()
                 close_db = True
@@ -40,22 +40,15 @@ class AdapterFactory:
                 db = db_session
                 close_db = False
 
-            key_obj = db.query(APIKey).filter(
-                APIKey.provider == provider,
-                APIKey.is_active == True,
-                APIKey.quota_remaining > 0
-            ).order_by(APIKey.priority.asc(), APIKey.quota_remaining.desc()).first()
+            router = KeyRouter(db)
+            key_obj = router.select_key(provider, strategy=strategy)
 
             if key_obj:
                 adapter.set_api_key(key_obj.key)
-                # 更新使用计数
-                key_obj.success_count += 1
-                key_obj.last_used = datetime.utcnow()
-                db.commit()
+                adapter.key_id = key_obj.id  # 保存 key_id 供后续记录指标
             if close_db:
                 db.close()
         except Exception as e:
-            # 如果数据库不可用或无Key，忽略，适配器将使用手动传入的Key
             print(f"Note: Could not retrieve Key from DB for {provider}: {e}")
 
         return adapter

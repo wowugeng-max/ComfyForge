@@ -7,6 +7,7 @@ import io
 from frontend.forms import prompt_form, character_form  # 导入模块
 from frontend.tabs import video_workshop
 from frontend.tabs import key_manager
+from frontend.forms import prompt_form, character_form, workflow_form  # 新增 workflow_form
 
 BACKEND_URL = "http://localhost:8000"
 
@@ -280,9 +281,9 @@ with gr.Blocks(title="ComfyForge") as demo:
                 asset_tags = gr.Textbox(label="标签 (用逗号分隔)", value="")
                 asset_thumbnail = gr.Textbox(label="缩略图 (路径或base64，可选)")
 
-                # 资产类型选择
+                # 资产类型选择，增加 "workflow"
                 asset_type = gr.Radio(
-                    ["prompt", "character"],  # 后续可动态从模块列表生成
+                    ["prompt", "character", "workflow"],  # 新增 workflow
                     label="资产类型",
                     value="prompt"
                 )
@@ -290,17 +291,20 @@ with gr.Blocks(title="ComfyForge") as demo:
                 # 创建表单列（通过模块生成）
                 prompt_col = prompt_form.create_form(asset_name, asset_desc, asset_tags, asset_thumbnail, project_dropdown)
                 character_col = character_form.create_form(asset_name, asset_desc, asset_tags, asset_thumbnail, project_dropdown)
+                workflow_col = workflow_form.create_form(asset_name, asset_desc, asset_tags, asset_thumbnail,
+                                                         project_dropdown)  # 新增
 
                 # 控制可见性
                 def update_form(atype):
                     return [
                         gr.update(visible=(atype == "prompt")),
-                        gr.update(visible=(atype == "character"))
+                        gr.update(visible=(atype == "character")),
+                        gr.update(visible=(atype == "workflow"))  # 新增
                     ]
                 asset_type.change(
                     fn=update_form,
                     inputs=asset_type,
-                    outputs=[prompt_col, character_col]
+                    outputs=[prompt_col, character_col, workflow_col]  # 新增输出
                 )
 
                 # 删除资产功能（保持不变）
