@@ -16,3 +16,9 @@ ENV/
 .env
 .env.local
 .env.*.local
+
+#react环境
+node_modules/
+
+data/temp
+data/assets
