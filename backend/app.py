@@ -12,18 +12,33 @@ from .api import assets, projects
 from .core.executors.video_loop import VideoLoopExecutor
 from .core.executors.cloud_video_loop import CloudVideoLoopExecutor
 from .api import keys
+import asyncio
+from .core.key_monitor import start_key_monitor
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时执行
-    init_db()  # 创建数据库表
-    print("数据库表已初始化")
+    # 启动时初始化数据库
+    from .db import init_db
+    init_db()
+    print("数据库初始化完成")
+
+    # 启动Key监控任务（作为后台任务）
+    monitor_task = asyncio.create_task(start_key_monitor(interval_minutes=60))
+    print("Key监控任务已启动")
+
     yield
-    # 关闭时执行（可选）
-    print("应用关闭")
+
+    # 关闭时取消监控任务
+    monitor_task.cancel()
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        pass
+    print("应用关闭，Key监控已停止")
 
 app = FastAPI(title="ComfyForge API", lifespan=lifespan)
 # 包含资产路由

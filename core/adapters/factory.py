@@ -4,66 +4,64 @@ import pkgutil
 import inspect
 from .base import BaseAdapter
 
-
 class AdapterFactory:
     _adapters = {}  # provider -> adapter_class
 
     @classmethod
     def register(cls, provider):
-        """装饰器：注册适配器类"""
-
         def wrapper(adapter_class):
             if not issubclass(adapter_class, BaseAdapter):
                 raise TypeError(f"{adapter_class} must inherit from BaseAdapter")
             cls._adapters[provider] = adapter_class
             return adapter_class
-
         return wrapper
 
     @classmethod
-    def get_adapter(cls, provider: str):
+    def get_adapter(cls, provider: str, db_session=None):
+        """获取适配器实例，自动从数据库选择最佳Key并注入"""
         if not cls._adapters:
             cls._discover_adapters()
         adapter_class = cls._adapters.get(provider)
         if not adapter_class:
             raise ValueError(f"Unsupported provider: {provider}")
 
-        # 创建adapter实例
         adapter = adapter_class()
 
-        # 尝试从数据库获取可用的Key（如果配置了）
+        # 尝试从数据库获取可用Key
         try:
-            # 延迟导入，避免循环依赖
             from backend.models.api_key import APIKey
-            from backend.db import SessionLocal
-            from datetime import datetime
+            from sqlalchemy.orm import Session
+            if db_session is None:
+                # 如果没有传入session，创建一个临时会话（注意需自行关闭）
+                from backend.db import SessionLocal
+                db = SessionLocal()
+                close_db = True
+            else:
+                db = db_session
+                close_db = False
 
-            db = SessionLocal()
-            try:
-                key_obj = db.query(APIKey).filter(
-                    APIKey.provider == provider,
-                    APIKey.is_active == True
-                ).order_by(APIKey.priority).first()
+            key_obj = db.query(APIKey).filter(
+                APIKey.provider == provider,
+                APIKey.is_active == True,
+                APIKey.quota_remaining > 0
+            ).order_by(APIKey.priority.asc(), APIKey.quota_remaining.desc()).first()
 
-                if key_obj and key_obj.quota_remaining > 0:
-                    # 将Key注入adapter（需要在BaseAdapter中添加set_api_key方法）
-                    if hasattr(adapter, 'set_api_key'):
-                        adapter.set_api_key(key_obj.key)
-                    # 更新使用记录
-                    key_obj.last_used = datetime.utcnow()
-                    key_obj.success_count += 1
-                    db.commit()
-            finally:
+            if key_obj:
+                adapter.set_api_key(key_obj.key)
+                # 更新使用计数
+                key_obj.success_count += 1
+                key_obj.last_used = datetime.utcnow()
+                db.commit()
+            if close_db:
                 db.close()
         except Exception as e:
-            # 如果数据库未准备好或没有Key，静默失败，adapter将继续使用手动传入的Key
-            print(f"Note: No database Key found for {provider}, using manual Key if provided")
+            # 如果数据库不可用或无Key，忽略，适配器将使用手动传入的Key
+            print(f"Note: Could not retrieve Key from DB for {provider}: {e}")
 
         return adapter
 
     @classmethod
     def _discover_adapters(cls):
-        """自动扫描 adapters 包下的所有模块，收集被 @register 装饰的类"""
         package = importlib.import_module("..adapters", __package__)
         for _, module_name, _ in pkgutil.iter_modules(package.__path__):
             if module_name.startswith("__"):

@@ -86,7 +86,10 @@ def create_tab():
                 with gr.Row():
                     test_id = gr.Number(label="测试Key ID", precision=0)
                     test_btn = gr.Button("测试Key")
+                    test_all_btn = gr.Button("测试所有Key")
                     test_result = gr.Textbox(label="测试结果")
+
+
 
         # 事件绑定
         refresh_btn.click(
@@ -106,4 +109,22 @@ def create_tab():
             inputs=test_id,
             outputs=test_result
         )
+
+        test_all_btn.click(
+            fn=test_all_keys,
+            outputs=[test_result, key_list]  # 假设key_list是刷新后的列表
+        )
+
+
+def test_all_keys():
+    try:
+        resp = requests.post(f"{BACKEND_URL}/api/keys/test-all")
+        if resp.status_code == 200:
+            results = resp.json()
+            # 可以简单显示结果，或触发列表刷新
+            return "批量测试完成", results
+        else:
+            return f"测试失败: {resp.text}", None
+    except Exception as e:
+        return f"请求异常: {e}", None
 
