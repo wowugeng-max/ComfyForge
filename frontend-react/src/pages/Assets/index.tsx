@@ -144,6 +144,9 @@ export default function AssetList() {
         <Link to="/assets/create">
           <Button type="primary">新建资产</Button>
         </Link>
+        <Link to="/assets/workflow-config">
+          <Button type="primary" ghost>新建工作流参数</Button>
+        </Link>
       </Space>
       <Table
         columns={columns}
