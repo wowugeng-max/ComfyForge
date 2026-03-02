@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactFlow, {
   useNodesState,
   useEdgesState,
@@ -13,11 +13,16 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { workflowToFlow } from '../../utils/workflowToFlow';
 import { CustomNode } from '../../components/CustomNode';
 import { ParamConfigPanel } from '../../components/ParamConfigPanel';
+import { BulkParamConfigPanel } from '../../components/BulkParamConfigPanel';
 import { getAllSuggestions, reportStats, extractStatsFromParameters, type Suggestion } from '../../utils/workflowSuggestions';
 import apiClient from '../../api/client';
 
 const nodeTypes = { customNode: CustomNode };
 const { Search } = Input;
+
+// 定义常量，用于稳定空对象/空数组引用
+const EMPTY_OBJECT = {};
+const EMPTY_ARRAY: Suggestion[] = [];
 
 export default function WorkflowConfig() {
   const { mode = 'edit', id } = useParams<{ mode?: string; id?: string }>();
@@ -28,8 +33,9 @@ export default function WorkflowConfig() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [nodeExistingParams, setNodeExistingParams] = useState<Record<string, string>>({});
+  const [nodeExistingParams, setNodeExistingParams] = useState<Record<string, string>>(EMPTY_OBJECT);
   const [panelVisible, setPanelVisible] = useState(false);
+  const [bulkPanelVisible, setBulkPanelVisible] = useState(false);
   const [workflowJson, setWorkflowJson] = useState<any>(null);
   const [parameters, setParameters] = useState<Record<string, { node_id: string; field: string }>>({});
   const [assetName, setAssetName] = useState('');
@@ -49,21 +55,25 @@ export default function WorkflowConfig() {
   }));
 
   // 通用函数：根据 workflowJson 更新节点图和推荐
-  const updateWorkflowData = async (json: any) => {
-    setWorkflowJson(json);
-    const { nodes: flowNodes, edges: flowEdges } = workflowToFlow(json);
-    setNodes(flowNodes);
-    setEdges(flowEdges);
-    setSuggestionsLoading(true);
-    try {
-      const sugs = await getAllSuggestions(json);
-      setSuggestionsMap(sugs);
-    } catch (error) {
-      console.error('获取推荐失败', error);
-    } finally {
-      setSuggestionsLoading(false);
+ const updateWorkflowData = useCallback(async (json: any) => {
+  setWorkflowJson(json);
+  const { nodes: flowNodes, edges: flowEdges } = workflowToFlow(json);
+  setNodes(flowNodes);
+  setEdges(flowEdges);
+  setSuggestionsLoading(true);
+  try {
+    const sugs = await getAllSuggestions(json);
+    setSuggestionsMap(sugs);
+    // 只有在新建模式 (!id) 下才自动打开批量面板
+    if (!id && Object.keys(sugs).length > 0) {
+      setBulkPanelVisible(true);
     }
-  };
+  } catch (error) {
+    console.error('获取推荐失败', error);
+  } finally {
+    setSuggestionsLoading(false);
+  }
+}, [id]); // 注意：依赖项需要加上 id
 
   // 文件上传处理
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,9 +139,11 @@ export default function WorkflowConfig() {
       };
       fetchAsset();
     }
-  }, [id, navigate]);
+  }, [id, navigate, updateWorkflowData]);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+    console.log('Clicked node data:', node.data);
+    console.log('Clicked node inputs:', node.data.inputs);
     if (isViewMode) {
       message.info('当前为只读模式，无法配置参数');
       return;
@@ -145,12 +157,13 @@ export default function WorkflowConfig() {
       }
     });
     setSelectedNode(node);
-    setNodeExistingParams(existing);
+    // 如果 existing 为空，使用常量 EMPTY_OBJECT 以避免触发重渲染
+    setNodeExistingParams(Object.keys(existing).length === 0 ? EMPTY_OBJECT : existing);
     setPanelVisible(true);
   }, [parameters, isViewMode]);
 
   // 保存参数配置（删除当前节点旧配置，合并新配置）
-  const handleSaveParams = (newParams: Record<string, { node_id: string; field: string }>) => {
+  const handleSaveParams = useCallback((newParams: Record<string, { node_id: string; field: string }>) => {
     if (isViewMode) return;
     setParameters(prev => {
       const filtered = Object.fromEntries(
@@ -160,7 +173,24 @@ export default function WorkflowConfig() {
     });
     setPanelVisible(false);
     message.success('参数配置已更新');
-  };
+  }, [selectedNode, isViewMode]);
+
+  // 批量保存参数（合并新参数）
+  const handleBulkSave = useCallback((newParams: Record<string, { node_id: string; field: string }>) => {
+    if (isViewMode) return;
+    setParameters(prev => ({ ...prev, ...newParams }));
+    setBulkPanelVisible(false);
+    message.success('批量参数配置已更新');
+  }, [isViewMode]);
+
+  // 关闭面板回调（稳定引用）
+  const handleCancelPanel = useCallback(() => {
+    setPanelVisible(false);
+  }, []);
+
+  const handleCancelBulkPanel = useCallback(() => {
+    setBulkPanelVisible(false);
+  }, []);
 
   // 删除单个参数
   const handleRemoveParam = (paramName: string) => {
@@ -200,7 +230,7 @@ export default function WorkflowConfig() {
         const res = await apiClient.post('/assets/', payload);
         savedId = res.data.id;
         message.success('创建成功');
-        navigate(`/assets/${savedId}`);
+        navigate(`/assets/workflow-config/edit/${savedId}`);
       }
 
       // 上报统计（异步，不阻塞）
@@ -212,6 +242,12 @@ export default function WorkflowConfig() {
       setLoading(false);
     }
   };
+
+  // 稳定化传递给子组件的 nodeData
+  const nodeDataForPanel = useMemo(() => {
+    if (!selectedNode) return undefined;
+    return { id: selectedNode.id, inputs: selectedNode.data.inputs };
+  }, [selectedNode]);
 
   return (
     <Card title={isViewMode ? '查看工作流参数' : (id ? '编辑工作流参数' : '新建工作流参数')}>
@@ -314,15 +350,24 @@ export default function WorkflowConfig() {
         )}
       </Card>
 
-      {/* 参数配置弹窗（只读模式下不显示） */}
+      {/* 批量配置面板 */}
+      <BulkParamConfigPanel
+        visible={bulkPanelVisible}
+        suggestionsMap={suggestionsMap}
+        workflowJson={workflowJson}
+        onSave={handleBulkSave}
+        onCancel={handleCancelBulkPanel}
+      />
+
+      {/* 单个节点配置面板（只读模式下不显示） */}
       {!isViewMode && (
         <ParamConfigPanel
           visible={panelVisible}
-          nodeData={selectedNode ? { id: selectedNode.id, inputs: selectedNode.data.inputs } : undefined}
+          nodeData={nodeDataForPanel}
           existingParams={nodeExistingParams}
-          nodeSuggestions={suggestionsMap[selectedNode?.id || '']}
+          nodeSuggestions={suggestionsMap[selectedNode?.id || ''] || EMPTY_ARRAY}
           onSave={handleSaveParams}
-          onCancel={() => setPanelVisible(false)}
+          onCancel={handleCancelPanel}
         />
       )}
     </Card>

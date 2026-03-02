@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Checkbox, Input, Form, message } from 'antd';
-import type {Suggestion} from '../utils/workflowSuggestions';
+import type { Suggestion } from '../utils/workflowSuggestions';
 
 interface FieldOption {
   field: string;
@@ -9,7 +9,7 @@ interface FieldOption {
   enabled: boolean;
 }
 
-export function ParamConfigPanel({
+export const ParamConfigPanel = React.memo(function ParamConfigPanel({
   visible,
   nodeData,
   existingParams = {},
@@ -27,6 +27,11 @@ export function ParamConfigPanel({
   const [fields, setFields] = useState<FieldOption[]>([]);
 
   useEffect(() => {
+    console.log('ParamConfigPanel rendered, fields:', fields);
+    console.log('ParamConfigPanel useEffect - nodeData:', nodeData);
+    console.log('ParamConfigPanel useEffect - inputs:', nodeData?.inputs);
+    console.log('ParamConfigPanel useEffect - existingParams:', existingParams);
+    console.log('ParamConfigPanel useEffect - nodeSuggestions:', nodeSuggestions);
     if (nodeData) {
       const configurable = Object.entries(nodeData.inputs || {})
         .filter(([_, value]) => !Array.isArray(value))
@@ -74,6 +79,7 @@ export function ParamConfigPanel({
   };
 
   const toggleField = (index: number, enabled: boolean) => {
+    console.log('toggleField', index, enabled);
     const newFields = [...fields];
     newFields[index].enabled = enabled;
     if (enabled && !newFields[index].customName) {
@@ -125,4 +131,4 @@ export function ParamConfigPanel({
       )}
     </Modal>
   );
-}
+});

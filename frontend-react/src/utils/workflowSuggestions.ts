@@ -7,7 +7,7 @@ export interface Suggestion {
   autoCheck?: boolean;
 }
 
-// 本地兜底规则（可从 JSON 加载，但为简化保留硬编码）
+// 本地兜底规则（硬编码，用于冷启动或未学习到的节点）
 const localRules: Record<string, Suggestion[]> = {
   CLIPTextEncode: [
     { field: 'text', friendlyName: '提示词', autoCheck: true },
@@ -39,9 +39,10 @@ const localRules: Record<string, Suggestion[]> = {
   INTConstant: [
     { field: 'value', friendlyName: '整数值', autoCheck: false },
   ],
+  // 可根据需要添加更多本地规则
 };
 
-// 缓存统计数据
+// 缓存统计数据（可选，避免重复请求）
 let statsCache: Record<string, { field: string; count: number }[]> | null = null;
 
 async function fetchStatsForClass(classType: string): Promise<{ field: string; count: number }[]> {
@@ -57,10 +58,11 @@ export async function getSuggestionsForNode(nodeId: string, nodeData: any): Prom
   const cls = nodeData.class_type;
   let suggestions: Suggestion[] = [];
 
-  // 1. 先尝试从本地规则获取
+  // 1. 从本地规则获取基础建议
   if (localRules[cls]) {
     suggestions = localRules[cls];
   } else {
+    // 模糊匹配兜底（备用）
     const lowerCls = cls.toLowerCase();
     if (lowerCls.includes('clip') && lowerCls.includes('encode')) {
       suggestions.push({ field: 'text', friendlyName: '提示词', autoCheck: true });
@@ -76,17 +78,36 @@ export async function getSuggestionsForNode(nodeId: string, nodeData: any): Prom
     }
   }
 
-  // 过滤掉节点不存在的字段
+  // 2. 获取统计数据
+  const stats = await fetchStatsForClass(cls);
+  const statFields = new Map(stats.map(s => [s.field, s.count]));
+
+  // 3. 将统计中出现的字段也加入建议（如果节点存在该字段且尚未在建议中）
+  if (stats.length > 0) {
+    for (const stat of stats) {
+      const field = stat.field;
+      if (nodeData.inputs && field in nodeData.inputs) {
+        const existing = suggestions.find(s => s.field === field);
+        if (!existing) {
+          // 新字段：使用字段名作为友好名称（可优化），autoCheck 可根据统计次数决定，这里简单设为 true
+          suggestions.push({
+            field,
+            friendlyName: field, // 可以改为从统计中获取常见名称（暂不实现）
+            autoCheck: true,      // 有统计记录就自动勾选
+          });
+        }
+      }
+    }
+  }
+
+  // 4. 过滤掉节点不存在的字段（安全起见）
   suggestions = suggestions.filter(s => nodeData.inputs && s.field in nodeData.inputs);
 
-  // 2. 获取统计数据，调整 autoCheck（如果统计次数高，则自动勾选）
-  const stats = await fetchStatsForClass(cls);
+  // 5. 用统计信息调整 autoCheck（对于已存在的建议，如果有统计，确保 autoCheck 为 true）
   if (stats.length > 0) {
-    // 标记哪些字段在统计中
-    const statFields = new Set(stats.map(s => s.field));
     suggestions = suggestions.map(s => ({
       ...s,
-      autoCheck: s.autoCheck || statFields.has(s.field), // 如果在统计中，也自动勾选
+      autoCheck: s.autoCheck || statFields.has(s.field),
     }));
   }
 
@@ -104,8 +125,11 @@ export async function getAllSuggestions(workflowJson: any): Promise<Record<strin
   return result;
 }
 
-// 上报函数：从 parameters 中提取统计信息
-export function extractStatsFromParameters(parameters: Record<string, { node_id: string; field: string }>, workflowJson: any) {
+// 从 parameters 中提取统计信息
+export function extractStatsFromParameters(
+  parameters: Record<string, { node_id: string; field: string }>,
+  workflowJson: any
+) {
   const stats: { class_type: string; field: string }[] = [];
   Object.values(parameters).forEach(config => {
     const nodeId = config.node_id;
@@ -118,6 +142,7 @@ export function extractStatsFromParameters(parameters: Record<string, { node_id:
   return stats;
 }
 
+// 上报统计到后端
 export async function reportStats(stats: { class_type: string; field: string }[]) {
   try {
     await apiClient.post('/suggestions/report', { items: stats });
