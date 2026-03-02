@@ -1,4 +1,5 @@
 import apiClient from '../api/client';
+import type {RecommendationRule} from '../types/rule';
 
 export interface Suggestion {
   field: string;
@@ -7,47 +8,39 @@ export interface Suggestion {
   autoCheck?: boolean;
 }
 
-// 本地兜底规则（硬编码，用于冷启动或未学习到的节点）
-const localRules: Record<string, Suggestion[]> = {
-  CLIPTextEncode: [
-    { field: 'text', friendlyName: '提示词', autoCheck: true },
-  ],
-  CLIPTextEncodeFlux: [
-    { field: 'text', friendlyName: '提示词', autoCheck: true },
-  ],
-  Prompt: [
-    { field: 'text', friendlyName: '提示词', autoCheck: true },
-  ],
-  KSampler: [
-    { field: 'seed', friendlyName: '随机种子', autoCheck: true },
-    { field: 'steps', friendlyName: '步数', autoCheck: true },
-    { field: 'cfg', friendlyName: 'CFG', autoCheck: true },
-  ],
-  SamplerCustomAdvanced: [
-    { field: 'seed', friendlyName: '随机种子', autoCheck: true },
-  ],
-  LoadImage: [
-    { field: 'image', friendlyName: '输入图像', autoCheck: true },
-  ],
-  LoadVideo: [
-    { field: 'video', friendlyName: '输入视频', autoCheck: true },
-  ],
-  WanFirstLastFrameToVideo: [
-    { field: 'frame_a', friendlyName: '首帧', autoCheck: true },
-    { field: 'frame_b', friendlyName: '尾帧', autoCheck: true },
-  ],
-  INTConstant: [
-    { field: 'value', friendlyName: '整数值', autoCheck: false },
-  ],
-  // 可根据需要添加更多本地规则
-};
+let rulesCache: Record<string, Array<{ field: string; friendlyName: string; autoCheck: boolean; priority: number; threshold: number }>> | null = null;
 
-// 缓存统计数据（可选，避免重复请求）
-let statsCache: Record<string, { field: string; count: number }[]> | null = null;
+async function fetchRules() {
+  if (rulesCache) return rulesCache;
+  try {
+    const res = await apiClient.get<RecommendationRule[]>('/recommendation-rules/?enabled=true');
+    const rules = res.data;
+    const map: Record<string, any[]> = {};
+    rules.forEach(rule => {
+      if (!map[rule.class_type]) map[rule.class_type] = [];
+      map[rule.class_type].push({
+        field: rule.field,
+        friendlyName: rule.friendly_name,
+        autoCheck: rule.auto_check,
+        priority: rule.priority,
+        threshold: rule.threshold,
+      });
+    });
+    // 对每个类型按优先级排序
+    Object.keys(map).forEach(key => {
+      map[key].sort((a, b) => a.priority - b.priority);
+    });
+    rulesCache = map;
+    return map;
+  } catch (e) {
+    console.error('获取规则失败', e);
+    return {};
+  }
+}
 
 async function fetchStatsForClass(classType: string): Promise<{ field: string; count: number }[]> {
   try {
-    const res = await apiClient.get('/suggestions/recommend', { params: { class_type: classType, limit: 10 } });
+    const res = await apiClient.get('/suggestions/recommend', { params: { class_type: classType, limit: 100 } });
     return res.data;
   } catch {
     return [];
@@ -56,62 +49,49 @@ async function fetchStatsForClass(classType: string): Promise<{ field: string; c
 
 export async function getSuggestionsForNode(nodeId: string, nodeData: any): Promise<Suggestion[]> {
   const cls = nodeData.class_type;
-  let suggestions: Suggestion[] = [];
+  const rulesByClass = await fetchRules();
+  const ruleList = rulesByClass[cls] || [];
 
-  // 1. 从本地规则获取基础建议
-  if (localRules[cls]) {
-    suggestions = localRules[cls];
-  } else {
-    // 模糊匹配兜底（备用）
-    const lowerCls = cls.toLowerCase();
-    if (lowerCls.includes('clip') && lowerCls.includes('encode')) {
-      suggestions.push({ field: 'text', friendlyName: '提示词', autoCheck: true });
-    }
-    if (lowerCls.includes('ksampler') || lowerCls.includes('sampler')) {
-      suggestions.push({ field: 'seed', friendlyName: '随机种子', autoCheck: true });
-      suggestions.push({ field: 'steps', friendlyName: '步数', autoCheck: true });
-    }
-    if (lowerCls.includes('load') && (lowerCls.includes('image') || lowerCls.includes('video'))) {
-      const inputField = lowerCls.includes('video') ? 'video' : 'image';
-      const friendly = lowerCls.includes('video') ? '输入视频' : '输入图像';
-      suggestions.push({ field: inputField, friendlyName: friendly, autoCheck: true });
-    }
-  }
-
-  // 2. 获取统计数据
+  // 获取统计数据
   const stats = await fetchStatsForClass(cls);
-  const statFields = new Map(stats.map(s => [s.field, s.count]));
+  const statMap = new Map(stats.map(s => [s.field, s.count]));
 
-  // 3. 将统计中出现的字段也加入建议（如果节点存在该字段且尚未在建议中）
-  if (stats.length > 0) {
-    for (const stat of stats) {
-      const field = stat.field;
-      if (nodeData.inputs && field in nodeData.inputs) {
-        const existing = suggestions.find(s => s.field === field);
-        if (!existing) {
-          // 新字段：使用字段名作为友好名称（可优化），autoCheck 可根据统计次数决定，这里简单设为 true
-          suggestions.push({
-            field,
-            friendlyName: field, // 可以改为从统计中获取常见名称（暂不实现）
-            autoCheck: true,      // 有统计记录就自动勾选
-          });
-        }
-      }
+  const suggestions: Suggestion[] = [];
+
+  // 处理规则中的字段
+  ruleList.forEach(rule => {
+    if (nodeData.inputs && rule.field in nodeData.inputs) {
+      const statCount = statMap.get(rule.field) || 0;
+      const autoCheck = rule.autoCheck || (statCount >= rule.threshold);
+      suggestions.push({
+        field: rule.field,
+        friendlyName: rule.friendlyName,
+        autoCheck,
+      });
     }
+  });
+
+  // 处理统计中出现的但不在规则中的字段
+  for (const stat of stats) {
+    const field = stat.field;
+    if (!nodeData.inputs || !(field in nodeData.inputs)) continue;
+    if (suggestions.some(s => s.field === field)) continue; // 已存在
+    // 使用默认阈值 1
+    const autoCheck = stat.count >= 1;
+    suggestions.push({
+      field,
+      friendlyName: field, // 暂时用字段名
+      autoCheck,
+    });
   }
 
-  // 4. 过滤掉节点不存在的字段（安全起见）
-  suggestions = suggestions.filter(s => nodeData.inputs && s.field in nodeData.inputs);
+  // 排序：规则中的按优先级已经排好，统计新增的按统计次数降序放在后面
+  const ruleFields = new Set(ruleList.map(r => r.field));
+  const ruleSuggestions = suggestions.filter(s => ruleFields.has(s.field));
+  const statSuggestions = suggestions.filter(s => !ruleFields.has(s.field))
+    .sort((a, b) => (statMap.get(b.field) || 0) - (statMap.get(a.field) || 0));
 
-  // 5. 用统计信息调整 autoCheck（对于已存在的建议，如果有统计，确保 autoCheck 为 true）
-  if (stats.length > 0) {
-    suggestions = suggestions.map(s => ({
-      ...s,
-      autoCheck: s.autoCheck || statFields.has(s.field),
-    }));
-  }
-
-  return suggestions;
+  return [...ruleSuggestions, ...statSuggestions];
 }
 
 export async function getAllSuggestions(workflowJson: any): Promise<Record<string, Suggestion[]>> {
@@ -125,7 +105,6 @@ export async function getAllSuggestions(workflowJson: any): Promise<Record<strin
   return result;
 }
 
-// 从 parameters 中提取统计信息
 export function extractStatsFromParameters(
   parameters: Record<string, { node_id: string; field: string }>,
   workflowJson: any
@@ -142,7 +121,6 @@ export function extractStatsFromParameters(
   return stats;
 }
 
-// 上报统计到后端
 export async function reportStats(stats: { class_type: string; field: string }[]) {
   try {
     await apiClient.post('/suggestions/report', { items: stats });

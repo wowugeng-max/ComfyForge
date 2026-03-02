@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
 from backend.api import suggestions
+from backend.api import recommendation_rules
+
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -59,6 +61,7 @@ app.include_router(assets.router)
 app.include_router(projects.router)  # 新增
 app.include_router(keys.router)
 app.include_router(suggestions.router)
+app.include_router(recommendation_rules.router)
 
 class PipelineStep(BaseModel):
     step: str

@@ -7,6 +7,7 @@ import {
   KeyOutlined,
   ApiOutlined,
 } from '@ant-design/icons';
+import { SettingOutlined } from '@ant-design/icons';
 
 const { Header, Content, Sider } = AntLayout;
 
@@ -27,6 +28,7 @@ export default function Layout() {
     { key: 'video', icon: <VideoCameraOutlined />, label: <Link to="/video-workshop">视频工坊</Link> },
     { key: 'keys', icon: <KeyOutlined />, label: <Link to="/keys">Key管理</Link> },
     { key: 'pipeline', icon: <ApiOutlined />, label: <Link to="/pipeline">图像生成管道</Link> },
+    { key: 'rules', icon: <SettingOutlined />, label: <Link to="/rules">推荐规则</Link> },
   ]}
 />
       </Sider>

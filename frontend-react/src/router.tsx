@@ -9,6 +9,7 @@ import AssetEdit from './pages/Assets/Edit';  // 确认路径正确
 import KeyManager from './pages/Keys';
 import VideoWorkshop from './pages/VideoWorkshop';
 import WorkflowConfig from './pages/Assets/WorkflowConfig';
+import RulesPage from './pages/Rules';
 
 const router = createBrowserRouter([
   {
@@ -25,7 +26,8 @@ const router = createBrowserRouter([
       { path: 'assets/:id/edit', element: <AssetEdit /> },
       { path: 'assets/workflow-config', element: <WorkflowConfig /> } ,      // 新建
       { path: 'assets/workflow-config/:id?', element: <WorkflowConfig /> }, //编辑
-      { path: 'assets/workflow-config/:mode?/:id?', element: <WorkflowConfig /> } //查看
+      { path: 'assets/workflow-config/:mode?/:id?', element: <WorkflowConfig /> }, //查看
+      { path: 'rules', element: <RulesPage /> }
     ],
   },
 ]);

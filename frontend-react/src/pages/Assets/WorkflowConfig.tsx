@@ -55,25 +55,48 @@ export default function WorkflowConfig() {
   }));
 
   // 通用函数：根据 workflowJson 更新节点图和推荐
- const updateWorkflowData = useCallback(async (json: any) => {
-  setWorkflowJson(json);
-  const { nodes: flowNodes, edges: flowEdges } = workflowToFlow(json);
-  setNodes(flowNodes);
-  setEdges(flowEdges);
-  setSuggestionsLoading(true);
-  try {
-    const sugs = await getAllSuggestions(json);
-    setSuggestionsMap(sugs);
-    // 只有在新建模式 (!id) 下才自动打开批量面板
-    if (!id && Object.keys(sugs).length > 0) {
-      setBulkPanelVisible(true);
+  const updateWorkflowData = useCallback(async (json: any) => {
+    setWorkflowJson(json);
+    const { nodes: flowNodes, edges: flowEdges } = workflowToFlow(json);
+    setNodes(flowNodes);
+    setEdges(flowEdges);
+    setSuggestionsLoading(true);
+    try {
+      const sugs = await getAllSuggestions(json);
+      setSuggestionsMap(sugs);
+      // 只有在新建模式 (!id) 下才自动打开批量面板
+      if (!id && Object.keys(sugs).length > 0) {
+        setBulkPanelVisible(true);
+      }
+    } catch (error) {
+      console.error('获取推荐失败', error);
+    } finally {
+      setSuggestionsLoading(false);
     }
-  } catch (error) {
-    console.error('获取推荐失败', error);
-  } finally {
-    setSuggestionsLoading(false);
-  }
-}, [id]); // 注意：依赖项需要加上 id
+  }, [id]);
+
+  // 手动刷新推荐（重新获取并打开批量面板）
+  const handleRefreshSuggestions = useCallback(async () => {
+    if (!workflowJson) {
+      message.warning('请先加载工作流');
+      return;
+    }
+    setSuggestionsLoading(true);
+    try {
+      const sugs = await getAllSuggestions(workflowJson);
+      setSuggestionsMap(sugs);
+      if (Object.keys(sugs).length > 0) {
+        setBulkPanelVisible(true);
+      } else {
+        message.info('没有新的推荐');
+      }
+    } catch (error) {
+      console.error('刷新推荐失败', error);
+      message.error('刷新推荐失败');
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, [workflowJson]);
 
   // 文件上传处理
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -276,6 +299,11 @@ export default function WorkflowConfig() {
           style={{ width: 120 }}
         />
         <Button onClick={() => handleLocateNode()}>定位</Button>
+        {isEditMode && (
+          <Button onClick={handleRefreshSuggestions} loading={suggestionsLoading}>
+            刷新建议
+          </Button>
+        )}
         {isEditMode && (
           <Button type="primary" onClick={handleSaveAsset} loading={loading}>
             保存资产
