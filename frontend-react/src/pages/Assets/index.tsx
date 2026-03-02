@@ -91,28 +91,38 @@ export default function AssetList() {
       render: (text) => new Date(text).toLocaleString(),
     },
     {
-      title: '操作',
-      key: 'action',
-      render: (_, record) => (
-        <Space>
+       title: '操作',
+  key: 'action',
+  render: (_, record) => (
+    <Space>
+      {record.type === 'workflow' ? (
+        <>
+          <Link to={`/assets/workflow-config/view/${record.id}`}>查看</Link>
+          <Link to={`/assets/workflow-config/edit/${record.id}`}>编辑</Link>
+        </>
+      ) : (
+        <>
           <Link to={`/assets/${record.id}`}>查看</Link>
-          <Button
-            type="link"
-            danger
-            onClick={async () => {
-              try {
-                await apiClient.delete(`/assets/${record.id}`);
-                message.success('删除成功');
-                fetchAssets(); // 刷新列表
-              } catch {
-                message.error('删除失败');
-              }
-            }}
-          >
-            删除
-          </Button>
-        </Space>
-      ),
+          <Link to={`/assets/${record.id}/edit`}>编辑</Link>
+        </>
+      )}
+      <Button
+        type="link"
+        danger
+        onClick={async () => {
+          try {
+            await apiClient.delete(`/assets/${record.id}`);
+            message.success('删除成功');
+            fetchAssets();
+          } catch {
+            message.error('删除失败');
+          }
+        }}
+      >
+        删除
+      </Button>
+    </Space>
+  ),
     },
   ];
 

@@ -1,21 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Checkbox, Input, Form } from 'antd';
+import { Modal, Checkbox, Input, Form, message } from 'antd';
+import type {Suggestion} from '../utils/workflowSuggestions';
 
 interface FieldOption {
   field: string;
   value: any;
-  paramName: string;
+  customName: string;
   enabled: boolean;
 }
 
 export function ParamConfigPanel({
   visible,
   nodeData,
+  existingParams = {},
+  nodeSuggestions = [],
   onSave,
   onCancel,
 }: {
   visible: boolean;
   nodeData?: { id: string; inputs: Record<string, any> };
+  existingParams?: Record<string, string>;
+  nodeSuggestions?: Suggestion[];
   onSave: (params: Record<string, { node_id: string; field: string }>) => void;
   onCancel: () => void;
 }) {
@@ -23,24 +28,43 @@ export function ParamConfigPanel({
 
   useEffect(() => {
     if (nodeData) {
-      // 提取可配置字段（非数组）
       const configurable = Object.entries(nodeData.inputs || {})
         .filter(([_, value]) => !Array.isArray(value))
-        .map(([field, value]) => ({
-          field,
-          value,
-          paramName: '',
-          enabled: false,
-        }));
+        .map(([field, value]) => {
+          const existingName = existingParams[field];
+          // 查找是否有推荐配置
+          const suggestion = nodeSuggestions.find(s => s.field === field);
+          // 如果已有配置名，则优先使用；否则如果有推荐且自动勾选，则使用推荐名；否则使用字段名
+          const customName = existingName || (suggestion?.friendlyName) || field;
+          const shouldEnable = existingName !== undefined || (suggestion?.autoCheck && !existingName);
+          return {
+            field,
+            value,
+            customName,
+            enabled: shouldEnable,
+          };
+        });
       setFields(configurable);
     }
-  }, [nodeData]);
+  }, [nodeData, existingParams, nodeSuggestions]);
 
   const handleOk = () => {
+    // 检查自定义名称不能重复
+    const names = fields.filter(f => f.enabled).map(f => f.customName.trim());
+    if (names.length !== new Set(names).size) {
+      message.error('参数名称不能重复');
+      return;
+    }
+    for (const f of fields) {
+      if (f.enabled && !f.customName.trim()) {
+        message.error('请填写所有勾选字段的参数名称');
+        return;
+      }
+    }
     const params: Record<string, { node_id: string; field: string }> = {};
     fields.forEach((f) => {
-      if (f.enabled && f.paramName.trim()) {
-        params[f.paramName.trim()] = {
+      if (f.enabled && f.customName.trim()) {
+        params[f.customName.trim()] = {
           node_id: nodeData!.id,
           field: `inputs/${f.field}`,
         };
@@ -52,15 +76,15 @@ export function ParamConfigPanel({
   const toggleField = (index: number, enabled: boolean) => {
     const newFields = [...fields];
     newFields[index].enabled = enabled;
-    if (enabled && !newFields[index].paramName) {
-      newFields[index].paramName = newFields[index].field; // 默认使用字段名
+    if (enabled && !newFields[index].customName) {
+      newFields[index].customName = newFields[index].field;
     }
     setFields(newFields);
   };
 
-  const updateParamName = (index: number, name: string) => {
+  const updateCustomName = (index: number, name: string) => {
     const newFields = [...fields];
-    newFields[index].paramName = name;
+    newFields[index].customName = name;
     setFields(newFields);
   };
 
@@ -90,8 +114,8 @@ export function ParamConfigPanel({
               {f.enabled && (
                 <Input
                   placeholder="参数名称"
-                  value={f.paramName}
-                  onChange={(e) => updateParamName(idx, e.target.value)}
+                  value={f.customName}
+                  onChange={(e) => updateCustomName(idx, e.target.value)}
                   style={{ width: 200, marginLeft: 12 }}
                 />
               )}

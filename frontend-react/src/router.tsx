@@ -23,7 +23,9 @@ const router = createBrowserRouter([
       { path: 'keys', element: <KeyManager /> },
       { path: 'pipeline', element: <Pipeline /> },
       { path: 'assets/:id/edit', element: <AssetEdit /> },
-      { path: 'assets/workflow-config/:id?', element: <WorkflowConfig /> }
+      { path: 'assets/workflow-config', element: <WorkflowConfig /> } ,      // 新建
+      { path: 'assets/workflow-config/:id?', element: <WorkflowConfig /> }, //编辑
+      { path: 'assets/workflow-config/:mode?/:id?', element: <WorkflowConfig /> } //查看
     ],
   },
 ]);

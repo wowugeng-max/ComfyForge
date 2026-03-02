@@ -18,6 +18,7 @@ from .core.executors.real_video_loop import RealVideoLoopExecutor
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import os
+from backend.api import suggestions
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -57,6 +58,7 @@ app.add_middleware(
 app.include_router(assets.router)
 app.include_router(projects.router)  # 新增
 app.include_router(keys.router)
+app.include_router(suggestions.router)
 
 class PipelineStep(BaseModel):
     step: str
