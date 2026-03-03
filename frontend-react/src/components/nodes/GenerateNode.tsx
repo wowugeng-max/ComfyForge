@@ -119,24 +119,33 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           ]}
         />
 
-        <Select
-          {...selectProps}
-          placeholder="供应商"
-          value={provider}
-          onChange={(val) => {
-            setProvider(val);
-            setModel(''); // 切换供应商时清空已选模型
-          }}
-          options={providers.map(p => ({ value: p.value, label: p.label }))}
-        />
+<Select
+  className="nodrag" // 关键：防止 React Flow 拦截点击/拖拽事件
+  placeholder="选择供应商"
+  value={provider}
+  onChange={val => {
+    setProvider(val);
+    setModel(''); // 切换供应商时重置模型
+  }}
+  style={{ width: '100%', marginBottom: 8 }}
+  // 关键：让下拉列表渲染在节点内，解决层级和滚动偏移问题
+  getPopupContainer={(trigger) => trigger.parentElement}
+  options={providers.map(p => ({ value: p.value, label: p.label }))}
+/>
 
-        <Select
-          {...selectProps}
-          placeholder="模型"
-          value={model || undefined} // 使用 undefined 才会显示 placeholder
-          onChange={setModel}
-          options={provider ? providers.find(p => p.value === provider)?.models.map(m => ({ value: m, label: m })) : []}
-        />
+<Select
+  className="nodrag" // 关键
+  placeholder="选择模型"
+  value={model}
+  onChange={setModel}
+  style={{ width: '100%', marginBottom: 8 }}
+  getPopupContainer={(trigger) => trigger.parentElement}
+  // 确保 options 格式正确
+  options={provider
+    ? providers.find(p => p.value === provider)?.models.map(m => ({ value: m, label: m }))
+    : []
+  }
+/>
 
         <TextArea
           placeholder="提示词"
