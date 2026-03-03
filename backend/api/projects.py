@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
-from ..db import SessionLocal
+from ..db import get_db  # 统一导入
 from ..models import Asset, Project
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -30,13 +30,6 @@ class ProjectOut(ProjectBase):
 
     class Config:
         from_attributes = True
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/", response_model=ProjectOut)
 def create_project(project: ProjectCreate, db: Session = Depends(get_db)):

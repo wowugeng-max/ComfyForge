@@ -7,7 +7,7 @@ python-multipart
 Pillow
 numpy
 opencv-python
-google-generativeai
+google-genai
 torch
 sqlalchemy
 moviepy

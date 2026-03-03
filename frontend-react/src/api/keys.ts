@@ -24,4 +24,8 @@ export const keyApi = {
 
   // 测试所有 Key
   testAll: () => apiClient.post('/keys/test-all'),
+
+
+  // 新增：按 Key ID 同步模型接口 [cite: 2026-03-03]
+  syncModels: (keyId: number) => apiClient.post(`/models/sync/${keyId}`)
 };

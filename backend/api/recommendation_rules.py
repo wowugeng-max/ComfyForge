@@ -4,19 +4,12 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
-from ..db import SessionLocal
+from ..db import get_db  # 统一导入
 from ..models.recommendation_rule import RecommendationRule
 from sqlalchemy import func
 from ..models.node_parameter_stat import NodeParameterStat
 
 router = APIRouter(prefix="/api/recommendation-rules", tags=["recommendation-rules"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class RuleBase(BaseModel):
     class_type: str

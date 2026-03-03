@@ -4,18 +4,10 @@ from typing import List
 from pydantic import BaseModel
 from datetime import datetime
 
-from ..db import SessionLocal
+from ..db import get_db  # 统一导入
 from ..models.node_parameter_stat import NodeParameterStat
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
-
-# 依赖
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class ReportItem(BaseModel):
     class_type: str

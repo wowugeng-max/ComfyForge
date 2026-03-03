@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
-from ..db import SessionLocal
+from ..db import get_db  # 统一导入
 from ..models import Asset, Project
 from ..models.schemas import ASSET_DATA_SCHEMAS
 
@@ -50,16 +50,6 @@ class AssetOut(AssetBase):
 
     class Config:
         from_attributes = True  # SQLAlchemy 2.0 风格，替代 orm_mode
-
-
-# 依赖项：获取数据库会话
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 
 @router.post("/", response_model=AssetOut)
 def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):

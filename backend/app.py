@@ -20,7 +20,12 @@ from fastapi.responses import FileResponse
 import os
 from backend.api import suggestions
 from backend.api import recommendation_rules
-
+from typing import Optional, Dict, Any
+import asyncio
+from core.adapters.factory import AdapterFactory
+from backend.core.asset_utils import save_image_from_base64, save_video_as_asset
+from backend.db import SessionLocal
+from backend.api import assets, projects, keys, suggestions, recommendation_rules, models # 统一导入
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -83,6 +88,13 @@ class DirectAPITaskRequest(BaseModel):
 class TaskResponse(BaseModel):
     task_id: str
     status: str
+
+class GenerateRequest(BaseModel):
+    provider: str
+    model: str
+    type: str  # 'image', 'video', 'prompt'
+    prompt: str
+    params: Optional[Dict[str, Any]] = {}
 
 @app.post("/api/tasks/direct")
 async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: BackgroundTasks):
@@ -189,3 +201,47 @@ async def get_file(file_path: str):
     if not os.path.exists(full_path):
         return {"error": "File not found"}, 404
     return FileResponse(full_path)
+
+@app.post("/api/generate")
+async def generate(request: GenerateRequest):
+    # 获取适配器实例（会自动选择最佳 Key）
+    adapter = AdapterFactory.get_adapter(request.provider)
+    # 构造 parts
+    parts = [{"type": "text", "data": request.prompt}]
+    # 调用适配器（同步，放入线程池）
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: adapter.call(
+            ai_config={
+                "provider": request.provider,
+                "model_name": request.model,
+                "extra_params": request.params
+            },
+            system_prompt=None,
+            parts=parts,
+            temperature=0.7,
+            seed=request.params.get("seed", 42)
+        )
+    )
+    # 根据 type 处理结果并保存资产
+    asset_id = None
+    if request.type == "image" and result["type"] == "image":
+        db = SessionLocal()
+        try:
+            asset_id = save_image_from_base64(result["content"], db)
+        finally:
+            db.close()
+    elif request.type == "video" and result["type"] == "video":
+        # 假设视频结果返回文件路径
+        db = SessionLocal()
+        try:
+            asset_id = save_video_as_asset(result["content"], db)
+        finally:
+            db.close()
+    # 返回结果和资产 ID
+    return {
+        "type": result["type"],
+        "content": result["content"],  # base64 或路径
+        "asset_id": asset_id
+    }

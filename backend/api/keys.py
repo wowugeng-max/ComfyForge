@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, validator
 from datetime import datetime
 
-from ..db import SessionLocal
+from ..db import get_db  # 统一导入
 from ..models.api_key import APIKey
 from ..core.key_tester import test_key
 
@@ -62,14 +62,6 @@ class APIKeyOut(APIKeyBase):
     @validator('avg_latency', pre=True, always=True)
     def validate_avg_latency(cls, v):
         return v if v is not None else 0.0
-
-# 依赖
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # 创建Key
 @router.post("/", response_model=APIKeyOut)

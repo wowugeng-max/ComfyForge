@@ -1,85 +1,81 @@
 # backend/models/schemas.py
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Dict, List, Any, Optional
+from datetime import datetime
 
-# ---------- Prompt 资产 ----------
-class PromptData(BaseModel):
-    content: str
-    negative: Optional[str] = None
+# --- 1. 资产基础数据结构 (用于校验 Asset.data) ---
 
-    # 可添加自定义验证，例如 content 不能为空
-    @validator('content')
-    def content_not_empty(cls, v):
-        if not v or not v.strip():
-            raise ValueError('prompt content cannot be empty')
-        return v.strip()
-
-# ---------- Image 资产 ----------
 class ImageData(BaseModel):
     file_path: str
-    width: int
-    height: int
-    format: str
-    original_base64_preview: Optional[str] = None  # 预览用，可不存完整
+    width: Optional[int] = None
+    height: Optional[int] = None
+    format: Optional[str] = "png"
 
-    @validator('width', 'height')
-    def positive_dimensions(cls, v):
-        if v <= 0:
-            raise ValueError('width and height must be positive')
-        return v
-
-# ---------- Character 资产 ----------
-class CharacterData(BaseModel):
-    core_prompt_asset_id: int
-    image_asset_ids: List[int] = Field(default_factory=list)
-    lora_asset_id: Optional[int] = None
-    variants: Dict[str, int] = Field(default_factory=dict)  # 变体名称 -> prompt 资产 ID
-
-    # 可选：验证 core_prompt_asset_id 对应的资产是否存在（需要传入 db，这里留空，可在上层处理）
-    # @validator('core_prompt_asset_id')
-    # def check_asset_exists(cls, v):
-    #     # 实际使用时可在 API 层查询数据库
-    #     return v
-
-# ---------- VIDEO 资产 ----------
 class VideoData(BaseModel):
     file_path: str
-    width: int
-    height: int
-    duration: float  # 视频时长（秒）
-    fps: float  # 帧率
-    format: str  # 如 "mp4"
-    original_base64_preview: Optional[str] = None  # 首帧预览
+    duration: Optional[float] = None
+    fps: Optional[int] = None
 
-    @validator('width', 'height', 'duration', 'fps')
-    def positive_numbers(cls, v):
-        if v <= 0:
-            raise ValueError('width, height, duration, fps must be positive')
-        return v
+class PromptData(BaseModel):
+    content: str
+    negative_prompt: Optional[str] = ""
 
-# ---------- Workflow 资产 ----------
-class WorkflowData(BaseModel):
-    workflow_json: Dict[str, Any] = Field(..., description="完整的 ComfyUI 工作流 JSON")
-    parameters: Dict[str, Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="参数定义，例如：{'positive_prompt': {'node_id': '6', 'field': 'inputs/strings'}}"
-    )
-    thumbnail_node_id: Optional[str] = Field(
-        None,
-        description="用于预览的节点 ID，可以是图像输出节点"
-    )
+# 定义别名以兼容不同模块的导入习惯
+ImageAssetData = ImageData
+VideoAssetData = VideoData
+PromptAssetData = PromptData
 
-    @validator('workflow_json')
-    def validate_workflow_json(cls, v):
-        if not isinstance(v, dict):
-            raise ValueError("workflow_json must be a dictionary")
-        return v
-
-# 资产类型到验证模型的映射（用于动态选择）
+# 关键：供 assets.py 校验使用
 ASSET_DATA_SCHEMAS = {
-    'prompt': PromptData,
-    'image': ImageData,
-    'character': CharacterData,
-    'video': VideoData,   # 新增
-    'workflow': WorkflowData,  # 新增
+    "image": ImageData,
+    "video": VideoData,
+    "prompt": PromptData
 }
+
+# --- 2. 资产 API 交互模型 ---
+
+class AssetBase(BaseModel):
+    type: str
+    name: str
+    description: Optional[str] = ""
+    tags: List[str] = []
+    data: Dict[str, Any]
+    thumbnail: Optional[str] = None
+    project_id: Optional[int] = None
+
+class AssetCreate(AssetBase):
+    pass
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[List[str]] = None
+    data: Optional[Dict[str, Any]] = None
+    thumbnail: Optional[str] = None
+    project_id: Optional[int] = None
+
+class AssetOut(AssetBase):
+    id: int
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    parent_id: Optional[int] = None
+    source_asset_ids: Optional[List[int]] = None
+    model_config = ConfigDict(from_attributes=True)
+
+# --- 3. 模型配置 API 交互模型 (新功能) ---
+
+class ModelConfigBase(BaseModel):
+    provider: str
+    model_name: str
+    display_name: str
+    capabilities: Dict[str, bool] = Field(default_factory=lambda: {
+        "chat": False, "vision": False, "image": False, "video": False
+    })
+    context_ui_params: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+class ModelConfigOut(ModelConfigBase):
+    id: int
+    last_synced: datetime
+    model_config = ConfigDict(from_attributes=True)

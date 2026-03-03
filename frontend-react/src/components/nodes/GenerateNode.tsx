@@ -1,201 +1,96 @@
-import React, { useState, useEffect } from 'react';
-import { type NodeProps, useReactFlow } from 'reactflow';
+import React, { useState, useEffect, useMemo } from 'react';
+import { type NodeProps } from 'reactflow';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
-import { Select, Input, Button, message, Spin, InputNumber } from 'antd';
+import { Select, Input, Button, message, Spin, InputNumber, Typography, Segmented } from 'antd';
+import { MessageOutlined, PictureOutlined, VideoCameraOutlined, EyeOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
+import { useCanvasStore } from '../../stores/canvasStore';
 
 const { TextArea } = Input;
-
-// 模型参数定义
-const modelParamDefs: Record<string, any[]> = {
-  'qwen-turbo': [
-    { name: 'seed', label: '种子', type: 'number', default: 42 },
-    { name: 'temperature', label: '温度', type: 'number', default: 0.7 },
-  ],
-  'dall-e-3': [
-    { name: 'size', label: '尺寸', type: 'string', default: '1024x1024' },
-  ],
-};
-
-// 供应商数据
-const providers = [
-  { value: 'Qwen', label: 'Qwen', models: ['qwen-turbo', 'qwen-plus'] },
-  { value: 'OpenAI', label: 'OpenAI', models: ['dall-e-3', 'gpt-4o'] },
-];
+const { Text } = Typography;
 
 const GenerateNode: React.FC<NodeProps> = (props) => {
   const { id, data } = props;
-  const [genType, setGenType] = useState(data.genType || 'image');
-  const [provider, setProvider] = useState(data.provider || '');
-  const [model, setModel] = useState(data.model || '');
-  const [prompt, setPrompt] = useState(data.prompt || '');
+  const { updateNodeData } = useCanvasStore();
+
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [paramValues, setParamValues] = useState<Record<string, any>>({});
-  const { setNodes } = useReactFlow();
+  const [allModels, setAllModels] = useState<any[]>([]);
+  const [mode, setMode] = useState<string>(data.mode || 'image');
+  const [selectedModel, setSelectedModel] = useState<string>(data.model_name || '');
+  const [prompt, setPrompt] = useState<string>(data.prompt || '');
+  const [params, setParams] = useState<Record<string, any>>(data.params || {});
+  const [generating, setGenerating] = useState(false);
 
-  // 这里的配置是为了让 Select 下拉框在 ReactFlow 这种有缩放和 overflow:hidden 的容器里正常显示
-  const selectProps = {
-    style: { width: '100%', marginBottom: 8 },
-    // 关键点 1：将下拉层渲染到 body，防止被节点容器截断
-    getPopupContainer: () => document.body,
-  };
-
+  // 1. 根据模式动态加载模型列表
   useEffect(() => {
-    if (!model) return;
-    const defs = modelParamDefs[model] || [];
-    const initial: Record<string, any> = {};
-    defs.forEach(p => { initial[p.name] = p.default; });
-    setParamValues(initial);
-  }, [model]);
+    const fetchModels = async () => {
+      setLoading(true);
+      try {
+        const res = await apiClient.get(`/models/?mode=${mode}`);
+        setAllModels(res.data);
+      } catch (err) { message.error('获取模型失败'); }
+      finally { setLoading(false); }
+    };
+    fetchModels();
+  }, [mode]);
 
-  const handleGenerate = async () => {
-    if (!provider || !model || !prompt) {
-      message.warning('请填写完整信息');
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await apiClient.post('/generate', {
-        provider,
-        model,
-        type: genType,
-        prompt,
-        params: paramValues,
-      });
-      const resultData = response.data;
-      setResult(resultData);
-      message.success('生成成功');
+  // 2. 状态同步至全局 Store
+  useEffect(() => {
+    updateNodeData(id, { mode, model_name: selectedModel, prompt, params });
+  }, [mode, selectedModel, prompt, params]);
 
-      const newData = {
-        ...data,
-        provider,
-        model,
-        genType,
-        prompt,
-        result: resultData
-      };
-      setNodes((nds) =>
-        nds.map((node) => {
-          if (node.id === id) {
-            return { ...node, data: newData };
-          }
-          return node;
-        })
-      );
-    } catch (error) {
-      message.error('生成失败');
-      console.error(error);
-    } finally {
-      setLoading(false);
+  const handleModelChange = (val: string) => {
+    setSelectedModel(val);
+    const m = allModels.find(i => i.model_name === val);
+    if (m?.context_ui_params[mode]) {
+      const defaults: any = {};
+      m.context_ui_params[mode].forEach((p: any) => defaults[p.name] = p.default);
+      setParams(defaults);
     }
   };
 
-  const renderPreview = () => {
-    if (!result) return null;
-    if (result.type === 'image' && result.content) {
-      return <img src={`data:image/png;base64,${result.content}`} alt="生成图像" style={{ maxWidth: '100%', maxHeight: 150 }} />;
-    }
-    if (result.type === 'video' && result.content) {
-      return <video src={`/api/files/${result.content}`} controls style={{ maxWidth: '100%', maxHeight: 150 }} />;
-    }
-    return <div>生成结果: {result.content}</div>;
+  const renderParams = () => {
+    const m = allModels.find(i => i.model_name === selectedModel);
+    if (!m?.context_ui_params[mode]) return null;
+    return m.context_ui_params[mode].map((p: any) => (
+      <div key={p.name} style={{ marginBottom: 8 }}>
+        <Text type="secondary" style={{ fontSize: 11 }}>{p.label}</Text>
+        <InputNumber className="nodrag" size="small" style={{ width: '100%' }}
+          value={params[p.name]} onChange={v => setParams(prev => ({ ...prev, [p.name]: v }))} />
+      </div>
+    ));
   };
 
   return (
     <BaseNode {...props}>
-      {/* 关键点 2：阻止 PointerDown 冒泡，防止点击下拉框时触发 ReactFlow 的节点拖拽 */}
-      <div style={{ padding: 8 }} onPointerDown={(e) => e.stopPropagation()}>
-        <Select
-          {...selectProps}
-          placeholder="生成类型"
-          value={genType}
-          onChange={setGenType}
+      <div style={{ width: 200 }}>
+        <Segmented block size="small" value={mode} onChange={v => { setMode(v as string); setSelectedModel(''); }}
           options={[
-            { value: 'image', label: '图像' },
-            { value: 'video', label: '视频' },
-            { value: 'prompt', label: '提示词' },
+            { value: 'chat', icon: <MessageOutlined />, label: '文本' },
+            { value: 'vision', icon: <EyeOutlined />, label: '识图' },
+            { value: 'image', icon: <PictureOutlined />, label: '绘图' },
           ]}
         />
-
-<Select
-  className="nodrag" // 关键：防止 React Flow 拦截点击/拖拽事件
-  placeholder="选择供应商"
-  value={provider}
-  onChange={val => {
-    setProvider(val);
-    setModel(''); // 切换供应商时重置模型
-  }}
-  style={{ width: '100%', marginBottom: 8 }}
-  // 关键：让下拉列表渲染在节点内，解决层级和滚动偏移问题
-  getPopupContainer={(trigger) => trigger.parentElement}
-  options={providers.map(p => ({ value: p.value, label: p.label }))}
-/>
-
-<Select
-  className="nodrag" // 关键
-  placeholder="选择模型"
-  value={model}
-  onChange={setModel}
-  style={{ width: '100%', marginBottom: 8 }}
-  getPopupContainer={(trigger) => trigger.parentElement}
-  // 确保 options 格式正确
-  options={provider
-    ? providers.find(p => p.value === provider)?.models.map(m => ({ value: m, label: m }))
-    : []
-  }
-/>
-
-        <TextArea
-          placeholder="提示词"
-          value={prompt}
-          onChange={e => setPrompt(e.target.value)}
-          rows={3}
-          style={{ marginBottom: 8 }}
-        />
-
-        {model && modelParamDefs[model]?.map(p => (
-          <div key={p.name} style={{ marginBottom: 8 }}>
-            <span style={{ marginRight: 8 }}>{p.label}:</span>
-            {p.type === 'number' ? (
-              <InputNumber
-                value={paramValues[p.name]}
-                onChange={val => setParamValues({...paramValues, [p.name]: val})}
-                style={{ width: '100%' }}
-              />
-            ) : (
-              <Input
-                value={paramValues[p.name]}
-                onChange={e => setParamValues({...paramValues, [p.name]: e.target.value})}
-              />
-            )}
-          </div>
-        ))}
-
-        <Button type="primary" onClick={handleGenerate} loading={loading} block>
-          生成
-        </Button>
-
-        {loading && <Spin style={{ marginTop: 8 }} />}
-        {renderPreview()}
+        {loading ? <Spin size="small" /> : (
+          <>
+            <Select className="nodrag" placeholder="选择模型" size="small" style={{ width: '100%', margin: '8px 0' }}
+              value={selectedModel || undefined} onChange={handleModelChange}
+              options={allModels.map(m => ({ label: m.display_name, value: m.model_name }))}
+            />
+            <TextArea className="nodrag" placeholder="Prompt..." size="small" rows={3}
+              value={prompt} onChange={e => setPrompt(e.target.value)} />
+            {renderParams()}
+            <Button type="primary" size="small" block style={{ marginTop: 8 }} loading={generating}>运行</Button>
+          </>
+        )}
       </div>
     </BaseNode>
   );
 };
 
 if (!nodeRegistry.get('generate')) {
-  nodeRegistry.register({
-    type: 'generate',
-    displayName: 'Generate',
-    component: GenerateNode,
-    defaultData: {
-      label: 'Generate',
-      genType: 'image',
-    },
-    inputs: {},
-    outputs: {},
-  });
+  nodeRegistry.register({ type: 'generate', displayName: 'AI 生成器', component: GenerateNode });
 }
 
 export default GenerateNode;

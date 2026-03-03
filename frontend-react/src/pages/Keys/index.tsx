@@ -1,21 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Space, Tag, message, Popconfirm, Modal, Form, Input, Select, Switch, InputNumber } from 'antd';
-import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Table, Button, Space, Tag, message, Popconfirm, Modal, Form, Input, Select, Switch, InputNumber, Typography, Tooltip } from 'antd';
+import {
+  PlusOutlined,
+  ReloadOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  CheckCircleOutlined,
+  CloudSyncOutlined,
+  ApiOutlined
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { keyApi } from '../../api/keys';
-import type {APIKey, APIKeyCreate, APIKeyUpdate} from '../../types/key';
+import { keyApi } from '../../api/keys'; // 确保 keyApi 已包含 syncModels 方法
+import type { APIKey, APIKeyCreate, APIKeyUpdate } from '../../types/key';
 
 const { Option } = Select;
+const { Text } = Typography;
 
 const providerOptions = [
   { value: 'Qwen', label: 'Qwen' },
   { value: 'Gemini', label: 'Gemini' },
   { value: 'Grok', label: 'Grok' },
-  { value: 'Hailuo', label: 'Hailuo' },
   { value: 'OpenAI', label: 'OpenAI' },
   { value: 'DeepSeek', label: 'DeepSeek' },
-  { value: 'Doubao', label: 'Doubao' },
-  { value: 'Luma', label: 'Luma' },
 ];
 
 export default function KeyManager() {
@@ -24,7 +30,10 @@ export default function KeyManager() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingKey, setEditingKey] = useState<APIKey | null>(null);
   const [form] = Form.useForm();
+
+  // 状态管理：记录正在测试或同步的 Key ID
   const [testLoading, setTestLoading] = useState<number | null>(null);
+  const [syncLoading, setSyncLoading] = useState<number | null>(null);
 
   const fetchKeys = async () => {
     setLoading(true);
@@ -42,6 +51,40 @@ export default function KeyManager() {
     fetchKeys();
   }, []);
 
+  // --- 新增：按 Key ID 同步模型逻辑 [cite: 2026-03-03] ---
+  const handleSyncModels = async (record: APIKey) => {
+    if (!record.is_active) {
+      message.warning('请先启用该 Key 后再尝试同步');
+      return;
+    }
+    setSyncLoading(record.id);
+    try {
+      // 核心：传递 record.id 而非 provider 字符串，实现 Key-模型 绑定 [cite: 2026-03-03]
+      const res = await keyApi.syncModels(record.id);
+      message.success(res.data.message || `${record.provider} 模型列表已更新`);
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || '同步失败，请检查 API Key 权限或网络';
+      message.error(errorMsg);
+    } finally {
+      setSyncLoading(null);
+    }
+  };
+
+  const handleTest = async (id: number) => {
+    setTestLoading(id);
+    try {
+      const res = await keyApi.test(id);
+      if (res.data.valid) {
+        message.success(`测试成功，剩余额度: ${res.data.quota_remaining ?? '未知'}`);
+      }
+      fetchKeys();
+    } catch {
+      message.error('测试请求失败');
+    } finally {
+      setTestLoading(null);
+    }
+  };
+
   const handleDelete = async (id: number) => {
     try {
       await keyApi.delete(id);
@@ -52,49 +95,12 @@ export default function KeyManager() {
     }
   };
 
-  const handleTest = async (id: number) => {
-    setTestLoading(id);
-    try {
-      const res = await keyApi.test(id);
-      if (res.data.valid) {
-        message.success(`测试成功，剩余额度: ${res.data.quota_remaining ?? '未知'}`);
-      } else {
-        message.error(`测试失败: ${res.data.message || '无效 Key'}`);
-      }
-      fetchKeys(); // 刷新以更新状态
-    } catch {
-      message.error('测试请求失败');
-    } finally {
-      setTestLoading(null);
-    }
-  };
-
-  const handleTestAll = async () => {
-    setLoading(true);
-    try {
-      await keyApi.testAll();
-      message.success('批量测试完成');
-      fetchKeys();
-    } catch {
-      message.error('批量测试失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const openModal = (key?: APIKey) => {
     setEditingKey(key || null);
     if (key) {
       form.setFieldsValue({
-        provider: key.provider,
-        key: key.key,
-        description: key.description,
-        is_active: key.is_active,
-        priority: key.priority,
+        ...key,
         tags: key.tags?.join(', '),
-        quota_total: key.quota_total,
-        quota_unit: key.quota_unit,
-        price_per_call: key.price_per_call,
       });
     } else {
       form.resetFields();
@@ -105,120 +111,67 @@ export default function KeyManager() {
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
-      const tags = values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [];
-      const payload: APIKeyCreate = {
-        provider: values.provider,
-        key: values.key,
-        description: values.description,
-        is_active: values.is_active,
-        priority: values.priority,
-        tags,
-        quota_total: values.quota_total,
-        quota_unit: values.quota_unit,
-        price_per_call: values.price_per_call,
+      const payload = {
+        ...values,
+        tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [],
       };
 
       if (editingKey) {
-        // 更新
-        const updatePayload: APIKeyUpdate = {
-          description: values.description,
-          is_active: values.is_active,
-          priority: values.priority,
-          tags,
-        };
-        await keyApi.update(editingKey.id, updatePayload);
+        await keyApi.update(editingKey.id, payload);
         message.success('更新成功');
       } else {
-        // 创建
         await keyApi.create(payload);
         message.success('创建成功');
       }
       setModalVisible(false);
       fetchKeys();
-    } catch (error) {
-      message.error('操作失败，请检查表单');
+    } catch {
+      message.error('操作失败');
     }
   };
 
   const columns: ColumnsType<APIKey> = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      key: 'id',
-      width: 60,
-    },
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
       title: '提供商',
       dataIndex: 'provider',
       key: 'provider',
       width: 100,
+      render: (text) => <Tag color="blue">{text}</Tag>
     },
-    {
-      title: '备注',
-      dataIndex: 'description',
-      key: 'description',
-      ellipsis: true,
-    },
+    { title: '备注', dataIndex: 'description', key: 'description', ellipsis: true },
     {
       title: '状态',
       dataIndex: 'is_active',
       key: 'is_active',
       width: 80,
-      render: (active) => (
-        <Tag color={active ? 'green' : 'red'}>{active ? '启用' : '禁用'}</Tag>
-      ),
-    },
-    {
-      title: '优先级',
-      dataIndex: 'priority',
-      key: 'priority',
-      width: 80,
-      sorter: (a, b) => a.priority - b.priority,
-    },
-    {
-      title: '剩余配额',
-      dataIndex: 'quota_remaining',
-      key: 'quota_remaining',
-      width: 100,
-      render: (text, record) => `${text} ${record.quota_unit}`,
-    },
-    {
-      title: '成功率',
-      key: 'success_rate',
-      width: 100,
-      render: (_, record) => {
-        const total = record.success_count + record.failure_count;
-        if (total === 0) return '-';
-        return `${((record.success_count / total) * 100).toFixed(1)}%`;
-      },
-    },
-    {
-      title: '平均延迟',
-      dataIndex: 'avg_latency',
-      key: 'avg_latency',
-      width: 100,
-      render: (text) => (text ? `${text.toFixed(0)}ms` : '-'),
-    },
-    {
-      title: '最后使用',
-      dataIndex: 'last_used',
-      key: 'last_used',
-      width: 150,
-      render: (text) => (text ? new Date(text).toLocaleString() : '-'),
+      render: (active) => <Tag color={active ? 'green' : 'red'}>{active ? '启用' : '禁用'}</Tag>,
     },
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 280,
       render: (_, record) => (
         <Space>
-          <Button
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => openModal(record)}
-          >
-            编辑
-          </Button>
+          <Tooltip title="编辑信息">
+            <Button size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
+          </Tooltip>
+
+          {/* 同步模型按钮：仅支持 Gemini 等已对接平台 [cite: 2026-03-03] */}
+          {record.provider === 'Gemini' && (
+            <Tooltip title="同步此 Key 拥有的模型列表">
+              <Button
+                size="small"
+                type="dashed"
+                icon={<CloudSyncOutlined />}
+                loading={syncLoading === record.id}
+                onClick={() => handleSyncModels(record)}
+              >
+                同步
+              </Button>
+            </Tooltip>
+          )}
+
           <Button
             size="small"
             icon={<CheckCircleOutlined />}
@@ -227,15 +180,9 @@ export default function KeyManager() {
           >
             测试
           </Button>
-          <Popconfirm
-            title="确定删除吗？"
-            onConfirm={() => handleDelete(record.id)}
-            okText="是"
-            cancelText="否"
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
+
+          <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -243,19 +190,14 @@ export default function KeyManager() {
   ];
 
   return (
-    <div>
-      <h1>Key 管理</h1>
-      <Space style={{ marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
-          新建 Key
-        </Button>
-        <Button icon={<ReloadOutlined />} onClick={fetchKeys}>
-          刷新
-        </Button>
-        <Button onClick={handleTestAll} loading={loading}>
-          批量测试
-        </Button>
-      </Space>
+    <div style={{ padding: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+        <Typography.Title level={3}><ApiOutlined /> Key 管理</Typography.Title>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>新建 Key</Button>
+          <Button icon={<ReloadOutlined />} onClick={fetchKeys}>刷新</Button>
+        </Space>
+      </div>
 
       <Table
         columns={columns}
@@ -263,69 +205,30 @@ export default function KeyManager() {
         loading={loading}
         rowKey="id"
         pagination={{ pageSize: 10 }}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 1000 }}
       />
 
       <Modal
-        title={editingKey ? '编辑 Key' : '新建 Key'}
+        title={editingKey ? '编辑 API Key' : '添加 API Key'}
         open={modalVisible}
         onOk={handleModalOk}
         onCancel={() => setModalVisible(false)}
-        width={600}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item
-            name="provider"
-            label="提供商"
-            rules={[{ required: true, message: '请选择提供商' }]}
-          >
-            <Select placeholder="请选择">
-              {providerOptions.map(p => (
-                <Option key={p.value} value={p.value}>{p.label}</Option>
-              ))}
+          <Form.Item name="provider" label="提供商" rules={[{ required: true }]}>
+            <Select placeholder="选择 AI 供应商">
+              {providerOptions.map(p => <Option key={p.value} value={p.value}>{p.label}</Option>)}
             </Select>
           </Form.Item>
-
-          <Form.Item
-            name="key"
-            label="API Key"
-            rules={[{ required: true, message: '请输入 API Key' }]}
-          >
-            <Input.Password placeholder="请输入 API Key" />
+          <Form.Item name="key" label="API Key" rules={[{ required: true }]}>
+            <Input.Password placeholder="填入 API Key" />
           </Form.Item>
-
-          <Form.Item name="description" label="备注">
-            <Input placeholder="备注信息" />
-          </Form.Item>
-
-          <Form.Item name="is_active" label="启用" valuePropName="checked" initialValue={true}>
+          <Form.Item name="description" label="备注"><Input /></Form.Item>
+          <Form.Item name="is_active" label="启用状态" valuePropName="checked" initialValue={true}>
             <Switch />
           </Form.Item>
-
-          <Form.Item
-            name="priority"
-            label="优先级 (0最高)"
-            rules={[{ required: true, type: 'number', min: 0 }]}
-            initialValue={5}
-          >
-            <InputNumber min={0} max={10} style={{ width: '100%' }} />
-          </Form.Item>
-
-          <Form.Item name="tags" label="标签 (逗号分隔)">
-            <Input placeholder="例如: free, backup" />
-          </Form.Item>
-
-          <Form.Item name="quota_total" label="总配额" initialValue={0}>
-            <InputNumber min={0} style={{ width: '100%' }} />
-          </Form.Item>
-
-          <Form.Item name="quota_unit" label="配额单位" initialValue="count">
-            <Input placeholder="例如: count, token, seconds" />
-          </Form.Item>
-
-          <Form.Item name="price_per_call" label="单次价格" initialValue={0}>
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
+          <Form.Item name="quota_total" label="总配额" initialValue={0}><InputNumber style={{ width: '100%' }} /></Form.Item>
         </Form>
       </Modal>
     </div>
