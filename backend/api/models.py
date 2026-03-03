@@ -10,6 +10,8 @@ from ..models.api_key import APIKey
 from ..models.model_config import ModelConfig
 from ..models.schemas import ModelConfigOut
 from ..core.services.model_syncer import ModelSyncer
+import asyncio
+from ..core.adapters.factory import AdapterFactory
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -133,3 +135,64 @@ def delete_model(model_id: int, db: Session = Depends(get_db)):
     db.delete(db_model)
     db.commit()
     return {"status": "success", "message": "模型已删除"}
+
+
+@router.post("/{model_id}/test")
+async def test_model_health(model_id: int, db: Session = Depends(get_db)):
+    """对单个模型进行连通性探针测试，并更新其健康档案"""
+    db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    if not db_model:
+        raise HTTPException(status_code=404, detail="模型不存在")
+
+    key_record = db.query(APIKey).filter(APIKey.id == db_model.api_key_id).first()
+    if not key_record or not key_record.is_active:
+        db_model.health_status = "error"
+        db.commit()
+        raise HTTPException(status_code=400, detail="绑定的 API Key 无效")
+
+    try:
+        from ..core.adapters.factory import AdapterFactory
+        adapter = AdapterFactory.get_adapter(db_model.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        # 🌟 USE THE NEW ASYNC .generate() METHOD INSTEAD OF .call() 🌟
+        # Send a minimal probe to test connection
+        result = await adapter.generate(
+            api_key=key_record.key,
+            model_name=db_model.model_name,
+            prompt="Hi",
+            type="text",
+            extra_params={"temperature": 0.1, "max_output_tokens": 10}
+        )
+
+        # If no exception was raised, it means we got a response successfully!
+        db_model.health_status = "healthy"
+        status_msg = "测试通过：模型运行健康！"
+
+    except Exception as e:
+        error_str = str(e).lower()
+        print(f"Test Probe Error: {error_str}")
+        # Accurately map errors
+        if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+            db_model.health_status = "quota_exhausted"
+            status_msg = "测试失败：免费额度已耗尽，或频率受限。"
+        elif "403" in error_str or "unauthorized" in error_str:
+            db_model.health_status = "unauthorized"
+            status_msg = "测试失败：无权限访问此模型。"
+        elif "not found" in error_str or "404" in error_str:
+            db_model.health_status = "error"
+            status_msg = "测试失败：官方接口中不存在该模型。"
+        else:
+            db_model.health_status = "error"
+            status_msg = f"测试失败：{str(e)}"
+
+    db_model.last_tested_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "status": db_model.health_status,
+        "message": status_msg,
+        "last_tested_at": db_model.last_tested_at
+    }

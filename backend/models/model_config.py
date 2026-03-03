@@ -20,3 +20,8 @@ class ModelConfig(Base):
     # 🌟 核心新增：区分同步模型与手动模型
     is_manual = Column(Boolean, default=False)
     last_synced = Column(DateTime, default=datetime.utcnow)
+
+    # 🌟 核心新增：健康追踪系统
+    # 状态枚举: 'unknown'(未知), 'healthy'(健康可用), 'quota_exhausted'(额度耗尽), 'unauthorized'(无权限/需绑卡), 'error'(其他错误)
+    health_status = Column(String, default="unknown")
+    last_tested_at = Column(DateTime, nullable=True)

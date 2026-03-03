@@ -1,5 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Space, Tag, message, Popconfirm, Modal, Form, Input, Select, Switch, InputNumber, Typography, Tooltip, Drawer, Checkbox } from 'antd';
+import {
+  Table,
+  Button,
+  Space,
+  Tag,
+  message,
+  Popconfirm,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Switch,
+  InputNumber,
+  Typography,
+  Tooltip,
+  Drawer,
+  Checkbox,
+  Spin
+} from 'antd';
 import {
   PlusOutlined,
   ReloadOutlined,
@@ -45,6 +63,28 @@ export default function KeyManager() {
   const [modelModalVisible, setModelModalVisible] = useState(false);
   const [editingModel, setEditingModel] = useState<any | null>(null);
   const [modelForm] = Form.useForm();
+  const [testingModel, setTestingModel] = useState<number | null>(null);
+
+
+  // 🌟 新增：处理单点测试
+  const handleTestModel = async (record: any) => {
+    setTestingModel(record.id);
+    try {
+      const res = await modelApi.test(record.id);
+      if (res.data.status === 'healthy') {
+        message.success(res.data.message);
+      } else {
+        message.warning(res.data.message);
+      }
+      // 测试完刷新列表以显示最新状态
+      fetchModels(currentKeyForModels!.id);
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '测试失败，请检查网络');
+      fetchModels(currentKeyForModels!.id);
+    } finally {
+      setTestingModel(null);
+    }
+  };
 
   // ================= Key 基础操作 =================
   const fetchKeys = async () => {
@@ -272,6 +312,51 @@ export default function KeyManager() {
           {record.capabilities?.vision && <Tag color="blue">识图</Tag>}
           {record.capabilities?.image && <Tag color="purple">绘图</Tag>}
           {record.capabilities?.video && <Tag color="magenta">视频</Tag>}
+        </Space>
+      ),
+    },
+    // 🌟 新增：健康状态列
+    {
+      title: '健康状态', key: 'health_status',
+      render: (_: any, record: any) => {
+        const statusMap: Record<string, { color: string, text: string }> = {
+          'healthy': { color: 'success', text: '可用' },
+          'quota_exhausted': { color: 'error', text: '额度耗尽' },
+          'unauthorized': { color: 'warning', text: '无权限' },
+          'error': { color: 'default', text: '异常' },
+          'unknown': { color: 'default', text: '未知' }
+        };
+        const s = statusMap[record.health_status] || statusMap['unknown'];
+        return (
+          <Tooltip title={record.last_tested_at ? `最后测试: ${new Date(record.last_tested_at).toLocaleString()}` : '尚未测试'}>
+            <Tag color={s.color}>{s.text}</Tag>
+          </Tooltip>
+        );
+      }
+    },
+    {
+      title: '来源', key: 'source',
+      render: (_: any, record: any) => (
+        record.is_manual ? <Tag color="orange">手动添加</Tag> : <Tag color="green">官方同步</Tag>
+      ),
+    },
+    {
+      title: '操作', key: 'action',
+      render: (_: any, record: any) => (
+        <Space size="middle">
+          {/* 🌟 新增：一键测试按钮 */}
+          <a onClick={() => handleTestModel(record)}>
+            {testingModel === record.id ? <Spin size="small" /> : '单点测试'}
+          </a>
+
+          {record.is_manual ? (
+            <>
+              <a onClick={() => openModelModal(record)}>编辑</a>
+              <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
+                <a style={{ color: 'red' }}>删除</a>
+              </Popconfirm>
+            </>
+          ) : null}
         </Space>
       ),
     },

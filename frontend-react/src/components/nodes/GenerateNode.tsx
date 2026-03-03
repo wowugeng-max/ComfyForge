@@ -25,6 +25,43 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const [prompt, setPrompt] = useState<string>(data.prompt || '');
   const [params, setParams] = useState<Record<string, any>>(data.params || {});
   const [generating, setGenerating] = useState(false);
+  // 🌟 新增：处理运行点击事件
+  const handleRun = async () => {
+    if (!selectedKey || !selectedModel || !prompt) {
+      message.warning('请完整选择 Key、模型，并输入提示词 (Prompt)');
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      // 从 keys 列表里找出当前选中 Key 的 provider (例如 'Gemini')
+      const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
+
+      const payload = {
+        api_key_id: selectedKey,
+        provider: selectedProvider,
+        model: selectedModel,
+        type: mode,
+        prompt: prompt,
+        params: params
+      };
+
+      // 调用后端生成接口
+      const res = await apiClient.post('/generate', payload);
+
+      message.success('生成成功！');
+      console.log('🎉 节点生成结果:', res.data);
+
+      // 可以将生成结果存入节点的全局数据中，方便连线传给下一个节点
+      updateNodeData(id, { ...data, result: res.data });
+
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || '调用模型失败，请检查网络或 Key 额度';
+      message.error(`生成报错: ${errorMsg}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   // 1. 初始化拉取所有启用的 API Keys
   useEffect(() => {
@@ -146,12 +183,37 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           {loading ? <div style={{ textAlign: 'center', margin: '10px 0' }}><Spin size="small" /></div> : (
             <>
               {/* 第二级：选择模型 */}
-              <Select
-                className="nodrag" placeholder="2. 选择模型" size="small" style={{ width: '100%' }}
-                value={selectedModel || undefined} onChange={handleModelChange}
-                disabled={!selectedKey}
-                options={allModels.map(m => ({ label: m.display_name, value: m.model_name }))}
-              />
+            <Select
+              className="nodrag"
+              placeholder="2. 选择模型"
+              size="small"
+              style={{ width: '100%' }}
+              value={selectedModel || undefined}
+              onChange={handleModelChange}
+              disabled={!selectedKey}
+              options={allModels.map(m => {
+                // 根据健康状态决定显示样式
+                let labelText = m.display_name;
+                let disabled = false;
+
+                if (m.health_status === 'quota_exhausted') {
+                  labelText = `🔴 ${m.display_name} (额度干了)`;
+                } else if (m.health_status === 'unauthorized') {
+                  labelText = `🟠 ${m.display_name} (无权限)`;
+                } else if (m.health_status === 'error') {
+                  labelText = `⚫ ${m.display_name} (报错)`;
+                } else if (m.health_status === 'healthy') {
+                  labelText = `🟢 ${m.display_name}`;
+                }
+
+                return {
+                  label: labelText,
+                  value: m.model_name,
+                  // 可选：你甚至可以在这里直接 disabled 掉坏模型，不允许用户选
+                  // disabled: m.health_status === 'quota_exhausted' || m.health_status === 'unauthorized'
+                };
+              })}
+            />
 
               {/* 输入框 */}
               <TextArea
@@ -166,7 +228,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
               </div>
 
               {/* 执行按钮 */}
-              <Button type="primary" size="small" block style={{ marginTop: 8 }} loading={generating}>
+              <Button type="primary" size="small" block style={{ marginTop: 8 }} loading={generating} onClick={handleRun}>
                 运行节点
               </Button>
             </>

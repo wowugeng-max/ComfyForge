@@ -15,4 +15,7 @@ export const modelApi = {
 
   // 新增：删除手动模型
   delete: (id: number) => apiClient.delete(`/models/${id}`),
+
+  // 🌟 新增：单点连通性测试
+  test: (id: number) => apiClient.post(`/models/${id}/test`),
 };

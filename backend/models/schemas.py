@@ -69,6 +69,9 @@ class ModelConfigBase(BaseModel):
     provider: str
     model_name: str
     display_name: str
+    # 🌟 核心新增：将健康状态暴露给前端
+    health_status: str = "unknown"
+    last_tested_at: Optional[datetime] = None
     capabilities: Dict[str, bool] = Field(default_factory=lambda: {
         "chat": False, "vision": False, "image": False, "video": False
     })
