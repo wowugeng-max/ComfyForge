@@ -74,6 +74,7 @@ class ModelConfigBase(BaseModel):
     })
     context_ui_params: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
+    is_manual: bool = False
 
 class ModelConfigOut(ModelConfigBase):
     id: int

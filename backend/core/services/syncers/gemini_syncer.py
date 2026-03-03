@@ -33,18 +33,23 @@ class GeminiSyncer(BaseSyncer):
 
     def infer_capabilities(self, model_id: str) -> Dict[str, bool]:
         """
-        根据 Gemini 1.5 Pro/Flash 的特性推断能力矩阵
+        根据模型名称推断能力矩阵 (精确识别图像和视频模型)
         """
         m = model_id.lower()
-        # 默认 Gemini 1.5+ 均支持文本和识图
+        # 默认假设是多模态对话模型
         caps = {"chat": True, "vision": True, "image": False, "video": False}
 
-        # 针对 Imagen (图像) 和 Veo (视频) 模型做前瞻性匹配
-        if "imagen" in m:
+        # 识别绘图模型 (增加对 nano banana 和 image 关键词的识别)
+        if "imagen" in m or "image" in m or "banana" in m:
             caps["image"] = True
-            caps["chat"] = False  # 纯生成模型通常不具备对话能力
-        if "veo" in m:
+            caps["chat"] = False  # 绘图模型不能用于对话
+            caps["vision"] = False  # 绘图模型不能用于识图
+
+        # 识别视频模型
+        if "veo" in m or "video" in m:
             caps["video"] = True
+            caps["chat"] = False
+            caps["vision"] = False
 
         return caps
 

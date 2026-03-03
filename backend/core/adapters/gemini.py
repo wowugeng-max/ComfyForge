@@ -1,28 +1,25 @@
-import google.generativeai as genai
-from typing import List, Dict, Any
+# backend/core/adapters/gemini.py
+from google import genai
+from .base import BaseAdapter
+from typing import Dict, Any
 
-class GeminiAdapter:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        genai.configure(api_key=self.api_key)
 
-    async def list_available_models(self) -> List[Dict[str, Any]]:
-        """
-        调用 Google API 获取当前 Key 可用的模型列表
-        """
+class GeminiAdapter(BaseAdapter):
+    async def generate(self, api_key: str, model_name: str, prompt: str, type: str, extra_params: Dict[str, Any]) -> \
+    Dict[str, Any]:
+        client = genai.Client(api_key=api_key)
+        temperature = extra_params.get("temperature", 0.7)
+
         try:
-            # list_models 是同步调用，在异步环境中建议使用 run_in_executor 或直接执行
-            models = genai.list_models()
-            result = []
-            for m in models:
-                # 过滤掉过旧的模型，只保留 gemini 系列
-                if "gemini" in m.name.lower():
-                    result.append({
-                        "id": m.name.replace("models/", ""),
-                        "display_name": m.display_name,
-                        "description": m.description
-                    })
-            return result
+            # 根据最新 SDK 调用模型
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=genai.types.GenerateContentConfig(
+                    temperature=temperature,
+                )
+            )
+            # 目前默认处理文本，后续可根据 type 参数扩展图像/视频解析逻辑
+            return {"type": "text", "content": response.text}
         except Exception as e:
-            print(f"Gemini list_models failed: {e}")
-            return []
+            raise RuntimeError(f"Gemini API 调用失败: {str(e)}")

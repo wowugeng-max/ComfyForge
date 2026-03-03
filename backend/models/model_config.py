@@ -17,4 +17,6 @@ class ModelConfig(Base):
     capabilities = Column(JSON, nullable=False)
     context_ui_params = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
+    # 🌟 核心新增：区分同步模型与手动模型
+    is_manual = Column(Boolean, default=False)
     last_synced = Column(DateTime, default=datetime.utcnow)

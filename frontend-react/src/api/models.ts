@@ -1,14 +1,18 @@
 // src/api/models.ts
 import apiClient from './client';
 
-export const syncModels = async (provider: string) => {
-  // 调用后端定义的 /api/models/sync/{provider} 接口 [cite: 2026-03-03]
-  const response = await apiClient.post(`/models/sync/${provider}`);
-  return response.data;
-};
+export const modelApi = {
+  // 获取某个 Key 下的模型
+  getByKeyId: (keyId: number, mode?: string) => {
+    return apiClient.get('/models/', { params: { key_id: keyId, mode } });
+  },
 
-export const getModelsByMode = async (mode: string) => {
-  // 获取按能力过滤的模型列表 [cite: 2026-03-03]
-  const response = await apiClient.get(`/models/?mode=${mode}`);
-  return response.data;
+  // 新增：手动创建模型
+  create: (data: any) => apiClient.post('/models/', data),
+
+  // 新增：更新模型（比如开关状态、修改能力）
+  update: (id: number, data: any) => apiClient.put(`/models/${id}`, data),
+
+  // 新增：删除手动模型
+  delete: (id: number) => apiClient.delete(`/models/${id}`),
 };

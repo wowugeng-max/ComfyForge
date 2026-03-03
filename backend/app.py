@@ -1,31 +1,30 @@
 # backend/app.py
-from fastapi import FastAPI, BackgroundTasks
-from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+import os
 import uuid
-from .core.executors.direct_api import DirectAPIPipelineExecutor
-from contextlib import asynccontextmanager
-from .db import init_db  # 确保 init_db 已定义
-from backend.api import assets
-from .core.asset_utils import save_image_from_base64
-from .api import assets, projects
-from .core.executors.video_loop import VideoLoopExecutor
-from .core.executors.cloud_video_loop import CloudVideoLoopExecutor
-from .api import keys
 import asyncio
-from .core.key_monitor import start_key_monitor
-from .core.executors.real_video_loop import RealVideoLoopExecutor
+from typing import Dict, Any, List, Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-import os
-from backend.api import suggestions
-from backend.api import recommendation_rules
-from typing import Optional, Dict, Any
-import asyncio
-from core.adapters.factory import AdapterFactory
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+# --- 1. 统一的相对路径/绝对路径导入 (消除冗余) ---
+from backend.db import init_db, SessionLocal, get_db
 from backend.core.asset_utils import save_image_from_base64, save_video_as_asset
-from backend.db import SessionLocal
-from backend.api import assets, projects, keys, suggestions, recommendation_rules, models # 统一导入
+from backend.core.key_monitor import start_key_monitor
+from backend.core.adapters.factory import AdapterFactory
+from backend.core.executors.direct_api import DirectAPIPipelineExecutor
+from backend.core.executors.video_loop import VideoLoopExecutor
+from backend.core.executors.cloud_video_loop import CloudVideoLoopExecutor
+from backend.core.executors.real_video_loop import RealVideoLoopExecutor
+
+# 统一集中导入所有 API 路由模块
+from backend.api import assets, projects, keys, suggestions, recommendation_rules, models
+from backend.models.api_key import APIKey
+from fastapi import HTTPException
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -34,7 +33,6 @@ tasks = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时初始化数据库
-    from .db import init_db
     init_db()
     print("数据库初始化完成")
 
@@ -52,22 +50,27 @@ async def lifespan(app: FastAPI):
         pass
     print("应用关闭，Key监控已停止")
 
+
 app = FastAPI(title="ComfyForge API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],  # 允许前端开发服务器地址
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有方法（包括 OPTIONS）
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-# 包含资产路由
+
+# --- 2. 集中挂载路由 ---
 app.include_router(assets.router)
-app.include_router(projects.router)  # 新增
+app.include_router(projects.router)
 app.include_router(keys.router)
 app.include_router(suggestions.router)
 app.include_router(recommendation_rules.router)
+app.include_router(models.router)
 
+
+# --- 3. Pydantic 数据模型定义 ---
 class PipelineStep(BaseModel):
     step: str
     provider: str
@@ -80,24 +83,32 @@ class PipelineStep(BaseModel):
     seed: Optional[int] = 42
     extra_params: Optional[Dict[str, Any]] = {}
 
+
 class DirectAPITaskRequest(BaseModel):
     pipeline: List[PipelineStep]
     api_keys: Dict[str, str]
     sync: bool = True  # 是否同步等待
 
+
 class TaskResponse(BaseModel):
     task_id: str
     status: str
 
+
+# --- 1. 更新 Pydantic 请求模型 ---
 class GenerateRequest(BaseModel):
+    api_key_id: int  # 核心新增：直接接收前端传来的 Key ID，实现严格的 Key-模型 绑定
     provider: str
     model: str
-    type: str  # 'image', 'video', 'prompt'
+    type: str  # 'image', 'video', 'prompt', 'text'
     prompt: str
     params: Optional[Dict[str, Any]] = {}
 
+
+# --- 4. 业务接口 ---
 @app.post("/api/tasks/direct")
-async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: BackgroundTasks):
+async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: BackgroundTasks,
+                              db: Session = Depends(get_db)):
     task_id = str(uuid.uuid4())
     task_def = request.dict()
     task_def["task_id"] = task_id
@@ -106,38 +117,28 @@ async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: B
     if request.sync:
         executor = DirectAPIPipelineExecutor()
         result = await executor.execute(task_def)
-        # 保存图像资产并记录血缘
+
         visited_ids = result.get("visited_asset_ids", [])
         outputs = result.get("outputs", {})
         created_asset_ids = {}
 
-        # 获取数据库会话
-        from .db import SessionLocal
-        db = SessionLocal()
-        try:
-            for key, value in outputs.items():
-                # 判断是否为图像 base64
-                if isinstance(value, str) and len(value) > 100:
-                    # 检查常见的图像 base64 头
-                    if value.startswith("iVBOR") or value.startswith("/9j/") or value.startswith("data:image"):
-                        try:
-                            asset_id = save_image_from_base64(value, db, source_ids=visited_ids)
-                            created_asset_ids[key] = asset_id
-                            # 可选择将 outputs 中的值替换为资产 ID 或文件路径，但前端可能期望 base64
-                            # 这里保持原样，同时返回创建的资产 ID 列表
-                        except Exception as e:
-                            print(f"Failed to save image for {key}: {e}")
-        finally:
-            db.close()
+        for key, value in outputs.items():
+            if isinstance(value, str) and len(value) > 100:
+                if value.startswith("iVBOR") or value.startswith("/9j/") or value.startswith("data:image"):
+                    try:
+                        # 注入依赖的 DB
+                        asset_id = save_image_from_base64(value, db, source_ids=visited_ids)
+                        created_asset_ids[key] = asset_id
+                    except Exception as e:
+                        print(f"Failed to save image for {key}: {e}")
 
-        # 将创建的资产 ID 加入结果，供前端参考
         result["created_assets"] = created_asset_ids
         tasks[task_id] = {"status": "completed", "result": result}
         return result
     else:
-        # 异步执行：后台任务
         background_tasks.add_task(_run_pipeline_background, task_id, task_def)
-        return {"task_id": task_id, "status": "queued"}  # 返回简单状态
+        return {"task_id": task_id, "status": "queued"}
+
 
 async def _run_pipeline_background(task_id: str, task_def: dict):
     executor = DirectAPIPipelineExecutor()
@@ -147,13 +148,15 @@ async def _run_pipeline_background(task_id: str, task_def: dict):
     except Exception as e:
         tasks[task_id] = {"status": "failed", "error": str(e)}
 
+
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
     return tasks.get(task_id, {"status": "not found"})
 
+
 @app.post("/api/tasks/video_loop")
 async def run_video_loop(request: dict):
-    print("视频循环端点被调用")  # 添加调试输出
+    print("视频循环端点被调用")
     executor = VideoLoopExecutor()
     try:
         result = await executor.execute(request)
@@ -164,10 +167,8 @@ async def run_video_loop(request: dict):
 
 @app.post("/api/tasks/cloud_video_loop")
 async def run_cloud_video_loop(request: dict):
-    """云端视频循环生成"""
-    # 从配置中读取RunningHub信息（建议从环境变量或数据库读取）
     cloud_config = {
-        "base_url": "https://www.runninghub.cn/proxy/your-api-key",  # 替换为你的实际地址
+        "base_url": "https://www.runninghub.cn/proxy/your-api-key",
         "api_key": None,
         "workflow_template_id": "wan_video_loop_template"
     }
@@ -179,9 +180,9 @@ async def run_cloud_video_loop(request: dict):
     except Exception as e:
         return {"error": str(e)}
 
+
 @app.post("/api/tasks/real_video_loop")
 async def run_real_video_loop(request: dict):
-    """真实本地视频循环生成（使用工作流模板）"""
     executor = RealVideoLoopExecutor(ffmpeg_path=r"D:\ffmpeg\ffmpeg-2026-02-26\bin\ffmpeg.exe")
     try:
         result = await executor.execute(request)
@@ -191,9 +192,9 @@ async def run_real_video_loop(request: dict):
         traceback.print_exc()
         return {"error": str(e)}
 
+
 @app.get("/api/files/{file_path:path}")
 async def get_file(file_path: str):
-    # 安全限制：只允许访问 data/temp 目录
     base_dir = os.path.abspath("data/temp")
     full_path = os.path.abspath(os.path.join(base_dir, file_path))
     if not full_path.startswith(base_dir):
@@ -202,46 +203,43 @@ async def get_file(file_path: str):
         return {"error": "File not found"}, 404
     return FileResponse(full_path)
 
+
+# --- 3. 全新的轻量级生成路由 ---
 @app.post("/api/generate")
-async def generate(request: GenerateRequest):
-    # 获取适配器实例（会自动选择最佳 Key）
-    adapter = AdapterFactory.get_adapter(request.provider)
-    # 构造 parts
-    parts = [{"type": "text", "data": request.prompt}]
-    # 调用适配器（同步，放入线程池）
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: adapter.call(
-            ai_config={
-                "provider": request.provider,
-                "model_name": request.model,
-                "extra_params": request.params
-            },
-            system_prompt=None,
-            parts=parts,
-            temperature=0.7,
-            seed=request.params.get("seed", 42)
+async def generate_content(request: GenerateRequest, db: Session = Depends(get_db)):
+    # 1. 从数据库中获取真正的明文 API Key
+    key_record = db.query(APIKey).filter(APIKey.id == request.api_key_id).first()
+    if not key_record or not key_record.is_active:
+        raise HTTPException(status_code=400, detail="无效或未启用的 API Key，请在 Key 管理页面检查")
+
+    # 2. 通过工厂获取对应的轻量级适配器实例
+    try:
+        adapter = AdapterFactory.get_adapter(request.provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # 3. 直接调用异步生成方法 (摒弃了旧的线程池 run_in_executor，性能大幅提升)
+    try:
+        result = await adapter.generate(
+            api_key=key_record.key,  # 动态注入查到的明文 Key
+            model_name=request.model,  # 前端选中的具体模型名称 (如 gemini-1.5-pro)
+            prompt=request.prompt,
+            type=request.type,
+            extra_params=request.params or {}
         )
-    )
-    # 根据 type 处理结果并保存资产
+    except Exception as e:
+        # 捕获官方 SDK 抛出的网络错误或额度超限等异常
+        raise HTTPException(status_code=500, detail=f"模型生成失败: {str(e)}")
+
+    # 4. 根据返回类型保存资产到本地 SQLite 数据库
     asset_id = None
-    if request.type == "image" and result["type"] == "image":
-        db = SessionLocal()
-        try:
-            asset_id = save_image_from_base64(result["content"], db)
-        finally:
-            db.close()
-    elif request.type == "video" and result["type"] == "video":
-        # 假设视频结果返回文件路径
-        db = SessionLocal()
-        try:
-            asset_id = save_video_as_asset(result["content"], db)
-        finally:
-            db.close()
-    # 返回结果和资产 ID
+    if request.type == "image" and result.get("type") == "image":
+        asset_id = save_image_from_base64(result["content"], db)
+    elif request.type == "video" and result.get("type") == "video":
+        asset_id = save_video_as_asset(result["content"], db)
+
     return {
-        "type": result["type"],
-        "content": result["content"],  # base64 或路径
+        "type": result.get("type", "text"),
+        "content": result.get("content", ""),
         "asset_id": asset_id
     }

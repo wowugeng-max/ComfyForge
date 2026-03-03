@@ -18,7 +18,7 @@ class LocalComfyExecutor(BaseExecutor):
         # 设置 ComfyUI 的输入目录（用于复制输入文件）
         if input_dir is None:
             # 默认假设 ComfyUI 运行目录下的 input 文件夹
-            self.input_dir = os.path.abspath("D:\ComfyUI_portable\ComfyUI_windows_portable\ComfyUI\input")  # 根据实际路径调整
+            self.input_dir = os.path.abspath(r"D:\ComfyUI_portable\ComfyUI_windows_portable\ComfyUI\input")  # 根据实际路径调整
         else:
             self.input_dir = input_dir
         os.makedirs(self.input_dir, exist_ok=True)
