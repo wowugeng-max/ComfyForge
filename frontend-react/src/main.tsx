@@ -4,6 +4,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import App from './App';
 import 'antd/dist/reset.css';
+import 'antd/dist/antd.css'; // 新增
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

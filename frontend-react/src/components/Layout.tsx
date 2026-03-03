@@ -6,6 +6,7 @@ import {
   VideoCameraOutlined,
   KeyOutlined,
   ApiOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { SettingOutlined } from '@ant-design/icons';
 
@@ -25,6 +26,7 @@ export default function Layout() {
   items={[
     { key: 'dashboard', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
     { key: 'assets', icon: <FileImageOutlined />, label: <Link to="/assets">资产管理</Link> },
+    { key: 'canvas', icon: <AppstoreOutlined />, label: <Link to="/canvas">无限画布</Link> },
     { key: 'video', icon: <VideoCameraOutlined />, label: <Link to="/video-workshop">视频工坊</Link> },
     { key: 'keys', icon: <KeyOutlined />, label: <Link to="/keys">Key管理</Link> },
     { key: 'pipeline', icon: <ApiOutlined />, label: <Link to="/pipeline">图像生成管道</Link> },
