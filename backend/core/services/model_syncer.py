@@ -6,6 +6,7 @@ from backend.core.registry import ProviderRegistry
 
 # 🌟 预热激活 Gemini 同步器 (很重要，必须有这行，装饰器才会执行)
 import backend.core.services.syncers.gemini_syncer
+import backend.core.services.syncers.qwen_syncer
 
 
 class ModelSyncer:

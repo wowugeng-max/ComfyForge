@@ -6,6 +6,7 @@ from backend.core.registry import ProviderRegistry
 
 import backend.core.adapters.gemini
 import backend.core.adapters.comfyui
+import backend.core.adapters.qwen
 
 
 class AdapterFactory:
