@@ -25,6 +25,7 @@ from backend.core.executors.real_video_loop import RealVideoLoopExecutor
 from backend.api import assets, projects, keys, suggestions, recommendation_rules, models
 from backend.models.api_key import APIKey
 from fastapi import HTTPException
+from backend.api import assets, projects, keys, suggestions, recommendation_rules, models, providers
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -68,6 +69,7 @@ app.include_router(keys.router)
 app.include_router(suggestions.router)
 app.include_router(recommendation_rules.router)
 app.include_router(models.router)
+app.include_router(providers.router)  # 🌟 挂载提供商路由
 
 
 # --- 3. Pydantic 数据模型定义 ---

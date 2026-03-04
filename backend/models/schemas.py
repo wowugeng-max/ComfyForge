@@ -146,3 +146,15 @@ class APIKeyOut(APIKeyBase):
     @validator('avg_latency', pre=True, always=True)
     def validate_avg_latency(cls, v):
         return v if v is not None else 0.0
+
+
+# --- 5. 提供商 (Provider) 交互模型 ---
+class ProviderOut(BaseModel):
+    id: str
+    display_name: str
+    service_type: str
+    default_base_url: Optional[str] = None
+    is_active: bool
+    icon: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)

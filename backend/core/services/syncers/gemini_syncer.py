@@ -2,8 +2,9 @@
 from .base import BaseSyncer
 from google import genai
 from typing import List, Dict, Any
+from backend.core.registry import ProviderRegistry
 
-
+@ProviderRegistry.register_syncer("gemini")
 class GeminiSyncer(BaseSyncer):
     async def fetch_remote_models(self, api_key: str) -> List[Dict[str, Any]]:
         """

@@ -3,8 +3,9 @@ from google import genai
 from google.genai import types  # 确保引入了 types
 from .base import BaseAdapter
 from typing import Dict, Any, Optional
+from backend.core.registry import ProviderRegistry
 
-
+@ProviderRegistry.register_adapter("gemini")
 class GeminiAdapter(BaseAdapter):
     async def generate(
             self,

@@ -2,31 +2,19 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
 from backend.models.model_config import ModelConfig
-from .syncers.gemini_syncer import GeminiSyncer
+from backend.core.registry import ProviderRegistry
 
+# 🌟 预热激活 Gemini 同步器 (很重要，必须有这行，装饰器才会执行)
+import backend.core.services.syncers.gemini_syncer
 
-# 如果未来有其他平台的 Syncer，在这里导入即可
 
 class ModelSyncer:
-    # 🌟 内部注册表统一使用小写
-    SYNCER_MAP = {
-        "gemini": GeminiSyncer,
-        # "openai": OpenAISyncer,
-    }
-
     @classmethod
     async def sync_provider(cls, db: Session, provider: str, api_key: str, key_id: int) -> int:
-        # 🌟 强制转小写，实现完全防呆
-        provider_lower = provider.lower() if provider else ""
 
-        # 获取对应平台的同步器
-        syncer_cls = cls.SYNCER_MAP.get(provider_lower)
-        if not syncer_cls:
-            raise ValueError(f"暂不支持该供应商的自动同步: {provider}")
+        # 🌟 终极修复：因为注册表返回的已经是实例了，直接拿来用！绝对不要加括号！
+        syncer = ProviderRegistry.get_syncer(provider)
 
-        syncer = syncer_cls()
-
-        # ... 下面的代码保持不变 (抓取远程模型、更新数据库等)
         # 抓取远程模型列表
         remote_models = await syncer.fetch_remote_models(api_key)
 
@@ -52,7 +40,7 @@ class ModelSyncer:
             if not db_model:
                 # 插入全新的模型记录
                 db_model = ModelConfig(
-                    provider=provider,  # 存入数据库的可以保持原样
+                    provider=provider,
                     model_name=m_id,
                     display_name=rm.get("display_name", m_id),
                     api_key_id=key_id,

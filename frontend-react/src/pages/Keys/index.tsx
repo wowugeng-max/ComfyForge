@@ -32,6 +32,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { keyApi } from '../../api/keys';
 import { modelApi } from '../../api/models'; // 新增导入
 import type { APIKey } from '../../types/key';
+import { providerApi } from '../../api/providers'; // 🌟 1. 引入接口
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -41,26 +42,17 @@ export default function KeyManager() {
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingKey, setEditingKey] = useState<APIKey | null>(null);
+  const [dbProviders, setDbProviders] = useState<any[]>([]);
   const [form] = Form.useForm();
 
   // 🌟 核心魔法：实时监听表单字段的变化
   const serviceType = Form.useWatch('service_type', form);
   const provider = Form.useWatch('provider', form);
 
-  // 1. 动态生成提供商列表
-  const providerOptions = serviceType === 'comfyui'
-    ? [
-        { label: 'RunningHub 云端', value: 'runninghub' },
-        { label: 'Vivita 云算力', value: 'vivita' },
-        { label: '本地 / 自建节点', value: 'local_comfyui' },
-      ]
-    : [
-        { label: 'Google Gemini', value: 'gemini' },
-        { label: '阿里千问 (Qwen)', value: 'qwen' },
-        { label: '字节豆包 (Doubao)', value: 'doubao' },
-        { label: 'OpenAI', value: 'openai' },
-        { label: '自定义 / 中转站 (Custom)', value: 'custom_llm' },
-      ];
+// 🌟 核心魔法：根据当前选中的大类 (LLM 还是 ComfyUI)，动态过滤数据库下发的提供商！
+  const providerOptions = dbProviders
+    .filter(p => p.service_type === serviceType)
+    .map(p => ({ label: p.display_name, value: p.id }));
 
   // 2. 动态判断 Base URL 是否可编辑
   // 规则：中转站 (custom_llm) 或 任何 ComfyUI 算力都可以编辑，官方大模型置灰
@@ -125,7 +117,17 @@ export default function KeyManager() {
   };
 
   useEffect(() => {
-    fetchKeys();
+    const fetchProviders = async () => {
+      try {
+        const res = await providerApi.getAll();
+        setDbProviders(res.data); // 把后端下发的数据存起来
+      } catch (error) {
+        message.error('获取提供商列表失败');
+      }
+    };
+
+    fetchProviders();
+    fetchKeys(); // 这是你原本获取 Key 列表的函数
   }, []);
 
   const handleSyncModels = async (record: APIKey) => {

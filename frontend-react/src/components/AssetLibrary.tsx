@@ -3,7 +3,14 @@ import { Input, Select, Spin, List, Tag, Typography, Badge, Empty, Tooltip } fro
 import { useAssetLibraryStore, type Asset } from '../stores/assetLibraryStore';
 import { useDrag } from 'react-dnd';
 import { DndItemTypes } from '../constants/dnd';
-import { SearchOutlined, FilterOutlined, PictureOutlined, FileTextOutlined, VideoCameraOutlined } from '@ant-design/icons';
+import {
+  SearchOutlined,
+  FilterOutlined,
+  PictureOutlined,
+  FileTextOutlined,
+  VideoCameraOutlined,
+  ApiOutlined
+} from '@ant-design/icons';
 
 const { Option } = Select;
 const { Search } = Input;
@@ -69,6 +76,8 @@ const AssetLibrary: React.FC = () => {
             <Option value="image"><PictureOutlined /> 图像</Option>
             <Option value="prompt"><FileTextOutlined /> 提示词</Option>
             <Option value="video"><VideoCameraOutlined /> 视频</Option>
+            {/* 🌟 新增下面这一行，让侧边栏支持筛选 workflow */}
+            <Option value="workflow"><ApiOutlined /> 工作流</Option>
           </Select>
 
           <Select
@@ -115,6 +124,7 @@ const AssetItem: React.FC<{ asset: Asset }> = ({ asset }) => {
       case 'image': return <PictureOutlined style={{ color: '#1890ff' }} />;
       case 'video': return <VideoCameraOutlined style={{ color: '#eb2f96' }} />;
       case 'prompt': return <FileTextOutlined style={{ color: '#52c41a' }} />;
+      case 'workflow': return <ApiOutlined style={{ color: '#722ed1' }} />;
       default: return null;
     }
   };

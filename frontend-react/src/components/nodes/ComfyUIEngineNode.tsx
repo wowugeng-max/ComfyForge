@@ -1,130 +1,181 @@
-import React, { useState } from 'react';
-import { Handle, Position, type NodeProps } from 'reactflow';
-import { BaseNode } from './BaseNode';
+// src/components/Nodes/ComfyUIEngineNode.tsx
+import React, { useState, useEffect } from 'react';
+import { Handle, Position } from 'reactflow';
+import { Select, Input, Button, Card, message, Typography, Space } from 'antd';
+import { PlayCircleOutlined, ApiOutlined, CloudServerOutlined } from '@ant-design/icons';
+import { providerApi } from '../../api/providers';
+import { keyApi } from '../../api/keys';
+import apiClient from '../../api/client';
 import { nodeRegistry } from '../../utils/nodeRegistry';
-import { Select, Button, Typography, Space, Divider, Tag } from 'antd';
-import { ApiOutlined, PartitionOutlined, BuildOutlined } from '@ant-design/icons';
+import { useDrop } from 'react-dnd';
+import { DndItemTypes } from '../../constants/dnd'; // 确保路径正确
 
 const { Text } = Typography;
+const { TextArea } = Input;
 
-// 模拟的后端平台配置
-const PLATFORMS = [
-  { value: 'local', label: '本地 (127.0.0.1:8188)', color: 'blue' },
-  { value: 'runninghub', label: 'RunningHub 云端', color: 'purple' },
-  { value: 'vivita', label: 'Vivita 云算力', color: 'cyan' },
-];
+export default function ComfyUIEngineNode({ data, id }: any) {
+  const [providers, setProviders] = useState<any[]>([]);
+  const [keys, setKeys] = useState<any[]>([]);
 
-export const ComfyUIEngineNode: React.FC<NodeProps> = (props) => {
-  const { isConnectable } = props;
-  const [platform, setPlatform] = useState('local');
-  const [template, setTemplate] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+  const [workflowJson, setWorkflowJson] = useState<string>(data.workflowJson || '');
 
-  // 核心状态：存储动态解析出来的输入项
-  const [dynamicInputs, setDynamicInputs] = useState<Array<{ id: string, type: string, label: string }>>([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [resultImage, setResultImage] = useState<any>(null); // 存放输出结果
 
-  // 🌟 核心魔法：模拟解析 ComfyUI JSON 工作流
-  const handleLoadTemplate = () => {
-    // 这里模拟从后端拉取到了一个复杂的 SDXL 生图 JSON 工作流
-    const mockWorkflowJSON: Record<string, any> = {
-      "3": { class_type: "CLIPTextEncode", _meta: { title: "正向提示词" } },
-      "4": { class_type: "CLIPTextEncode", _meta: { title: "反向提示词" } },
-      "10": { class_type: "LoadImage", _meta: { title: "垫图 (Image)" } },
-      "8": { class_type: "VAEDecode" } // 不需要暴露的节点
-    };
+  // 🌟 核心魔法：让当前节点变成一个可以接收拖拽的靶子！
+  const [{ isOver }, drop] = useDrop(() => ({
+    accept: DndItemTypes.ASSET,
+    drop: (item: any) => {
+      const asset = item.asset;
+      // 🌟 关键修复：允许接收类型为 workflow 的资产
+      if (asset && (asset.type === 'workflow' || asset.type === 'prompt')) {
 
-    const parsedInputs = [];
+        // 根据你后端的结构，如果是 JSON 字符串，可能存在 asset.data 里面，或者直接就是 asset.content
+        // 如果拖进来的是 "[object Object]" 这种错误格式，你可以用 JSON.stringify 兜底转换一下：
+        let jsonContent = '';
+        const rawContent = asset.data?.content || asset.content || asset.data || '';
 
-    // 遍历 JSON 节点，寻找需要暴露为输入的节点
-    for (const [nodeId, nodeData] of Object.entries(mockWorkflowJSON)) {
-      if (nodeData.class_type === 'CLIPTextEncode') {
-        parsedInputs.push({ id: nodeId, type: 'text', label: nodeData._meta?.title || `文本输入 ${nodeId}` });
-      } else if (nodeData.class_type === 'LoadImage') {
-        parsedInputs.push({ id: nodeId, type: 'image', label: nodeData._meta?.title || `图片输入 ${nodeId}` });
+        if (typeof rawContent === 'object') {
+             jsonContent = JSON.stringify(rawContent, null, 2);
+        } else {
+             jsonContent = String(rawContent);
+        }
+
+        setWorkflowJson(jsonContent);
+        message.success(`成功加载工作流: ${asset.name}`);
+      } else {
+        message.warning('格式不对哦，请拖入“工作流 (workflow)”类型的资产');
       }
-    }
+    },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+    }),
+  }));
 
-    setDynamicInputs(parsedInputs);
-    setTemplate('sdxl_turbo_v1');
+  // 加载基础数据
+  useEffect(() => {
+    const fetchInitData = async () => {
+      try {
+        const [provRes, keyRes] = await Promise.all([
+          providerApi.getAll('comfyui'), // 🌟 只拉取算力引擎
+          keyApi.getAll()
+        ]);
+        setProviders(provRes.data);
+        setKeys(keyRes.data);
+      } catch (error) {
+        message.error('加载节点配置失败');
+      }
+    };
+    fetchInitData();
+  }, []);
+
+  // 动态过滤 Key
+  const availableKeys = keys.filter(
+    k => k.provider.toLowerCase() === selectedProvider?.toLowerCase() && k.is_active
+  );
+
+  const handleRun = async () => {
+    if (!selectedProvider || !selectedKeyId) return message.warning('请选择算力平台和凭证');
+    if (!workflowJson.trim()) return message.warning('请输入 Workflow JSON');
+
+    try { JSON.parse(workflowJson); } catch (e) { return message.error('JSON 格式不正确'); }
+
+    setIsRunning(true);
+    setResultImage(null);
+
+    try {
+      // 🌟 发送标准请求给大一统路由
+      const res = await apiClient.post('/generate', {
+        api_key_id: selectedKeyId,
+        provider: selectedProvider,
+        model: 'comfyui-workflow',
+        type: 'image',
+        prompt: workflowJson,
+        params: { provider: selectedProvider } // 传给后端辅助判断
+      });
+
+      message.success('渲染成功！');
+      console.log('引擎完整输出:', res.data.content);
+
+      // 这里的具体解析视你工作流里用的 Save 节点而定
+      // 暂时把原始数据存下来，你可以在控制台查看结构，方便下一步提取图片 URL
+      setResultImage(JSON.stringify(res.data.content, null, 2));
+
+    } catch (error: any) {
+      message.error(error.response?.data?.detail || '渲染执行失败');
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   return (
-    <BaseNode {...props}>
-      <div style={{ width: 280 }}>
-        {/* 顶部标题栏 */}
-        <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <PartitionOutlined style={{ color: '#1890ff', fontSize: 16 }} />
-          <Text strong>ComfyUI 通用引擎</Text>
-        </div>
+    <Card
+        ref={drop} // 🌟 关键：把 drop 挂载到这里
+      size="small"
+      title={<><CloudServerOutlined /> 算力引擎</>}
+      style={{ width: 350, borderRadius: 12,// 🌟 添加交互反馈：如果有东西拖到上面，边框变成蓝色虚线
+        border: isOver ? '2px dashed #1890ff' : '1px solid #f0f0f0',
+        backgroundColor: isOver ? '#e6f7ff' : '#fff',
+        transition: 'all 0.3s' }}
+    >
+      <Handle type="target" position={Position.Left} id="in" />
 
-        {/* 1. 算力平台切换 */}
-        <div style={{ marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>1. 算力平台 (后端引擎)</Text>
+      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <div>
+          <Text type="secondary" style={{ fontSize: 12 }}>算力提供商</Text>
           <Select
-            size="small"
             style={{ width: '100%' }}
-            value={platform}
-            onChange={setPlatform}
-            options={PLATFORMS}
-            suffixIcon={<ApiOutlined />}
+            placeholder="选择本地节点或云算力"
+            options={providers.map(p => ({ label: p.display_name, value: p.id }))}
+            value={selectedProvider}
+            onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); }}
           />
         </div>
 
-        {/* 2. 加载工作流模板 */}
-        <div style={{ marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>2. 工作流模板 (JSON)</Text>
-          {!template ? (
-            <Button size="small" type="dashed" block onClick={handleLoadTemplate} icon={<BuildOutlined />}>
-              加载 SDXL 测试模板
-            </Button>
-          ) : (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f5f5f5', padding: '4px 8px', borderRadius: 4 }}>
-              <Text style={{ fontSize: 12 }} strong>sdxl_turbo_v1.json</Text>
-              <Button type="link" size="small" danger onClick={() => { setTemplate(null); setDynamicInputs([]); }}>卸载</Button>
-            </div>
-          )}
+        <div>
+          <Text type="secondary" style={{ fontSize: 12 }}>执行凭证 (API Key)</Text>
+          <Select
+            style={{ width: '100%' }}
+            placeholder={selectedProvider ? "选择凭证" : "请先选择平台"}
+            options={availableKeys.map(k => ({ label: `${k.description || '凭证'} (ID:${k.id})`, value: k.id }))}
+            value={selectedKeyId}
+            onChange={setSelectedKeyId}
+            disabled={!selectedProvider}
+          />
         </div>
 
-        {/* 🌟 3. 动态长出的输入句柄 (Handles) */}
-        {dynamicInputs.length > 0 && (
-          <>
-            <Divider style={{ margin: '8px 0' }} />
-            <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>动态暴露参数 (等待连线注入)</Text>
+        <div>
+          <Text type="secondary" style={{ fontSize: 12 }}><ApiOutlined /> Workflow JSON (API)</Text>
+          <TextArea
+            rows={5}
+            placeholder="粘贴从 ComfyUI 导出的 API JSON..."
+            value={workflowJson}
+            onChange={(e) => setWorkflowJson(e.target.value)}
+          />
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, position: 'relative' }}>
-              {dynamicInputs.map((input, index) => (
-                <div key={input.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fafafa', padding: '4px 8px', borderRadius: 4, border: '1px solid #e8e8e8' }}>
-                  {/* 极其关键：根据解析出的 ID 动态生成 Handle！ */}
-                  <Handle
-                    type="target"
-                    position={Position.Left}
-                    id={`in_${input.id}`}
-                    style={{ top: 15 + index * 36, background: input.type === 'image' ? '#722ed1' : '#13c2c2' }}
-                    isConnectable={isConnectable}
-                  />
-                  <Text style={{ fontSize: 12 }}>{input.label}</Text>
-                  <Tag color={input.type === 'image' ? 'purple' : 'cyan'} style={{ margin: 0 }}>
-                    {input.type === 'image' ? '图片' : '文本'}
-                  </Tag>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        <Button type="primary" size="small" block style={{ marginTop: 16 }} disabled={!template}>
-          发送至 {PLATFORMS.find(p => p.value === platform)?.label.split(' ')[0]} 运行
+        <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun}>
+          {isRunning ? '引擎轰鸣中...' : '提交渲染'}
         </Button>
 
-        {/* 固定的最终输出圆点 */}
-        <Handle type="source" position={Position.Right} isConnectable={isConnectable} id="out" style={{ background: '#52c41a' }} />
-      </div>
-    </BaseNode>
-  );
-};
+        {resultImage && (
+          <div style={{ marginTop: 10, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 150, overflowY: 'auto' }}>
+            <Text type="secondary" style={{ fontSize: 10 }}>输出结果 (供调试):</Text>
+            <pre style={{ fontSize: 10, margin: 0 }}>{resultImage}</pre>
+          </div>
+        )}
+      </Space>
 
-// 注册节点
-if (!nodeRegistry.get('comfyui_engine')) {
-  nodeRegistry.register({ type: 'comfyui_engine', displayName: 'ComfyUI 引擎', component: ComfyUIEngineNode });
+      <Handle type="source" position={Position.Right} id="out" />
+    </Card>
+  );
 }
 
-export default ComfyUIEngineNode;
+nodeRegistry.register({
+  type: 'comfyUIEngine',
+  displayName: '🚀 ComfyUI 引擎', // 这就是会在你左侧菜单里显示出来的名字！
+  component: ComfyUIEngineNode,
+  defaultData: { workflowJson: '' }
+});
