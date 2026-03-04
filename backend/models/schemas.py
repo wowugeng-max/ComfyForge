@@ -22,16 +22,26 @@ class PromptData(BaseModel):
     content: str
     negative_prompt: Optional[str] = ""
 
+# 🌟 核心修复：新增工作流的数据模型
+class WorkflowData(BaseModel):
+    workflow_json: Optional[Dict[str, Any]] = None
+    parameters: Optional[Dict[str, Any]] = None
+    content: Optional[str] = None  # 兼容以前的旧数据
+
+    model_config = ConfigDict(extra='allow')  # 允许存入任何额外的 JSON 字段
+
 # 定义别名以兼容不同模块的导入习惯
 ImageAssetData = ImageData
 VideoAssetData = VideoData
 PromptAssetData = PromptData
+WorkflowAssetData = WorkflowData # 🌟 新增
 
 # 关键：供 assets.py 校验使用
 ASSET_DATA_SCHEMAS = {
     "image": ImageData,
     "video": VideoData,
-    "prompt": PromptData
+    "prompt": PromptData,
+    "workflow": WorkflowData
 }
 
 # --- 2. 资产 API 交互模型 ---

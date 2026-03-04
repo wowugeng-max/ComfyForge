@@ -6,6 +6,7 @@ import { nodeRegistry } from '../../utils/nodeRegistry';
 import { DndItemTypes } from '../../constants/dnd';
 import { useCanvasStore } from '../../stores/canvasStore';
 import { Typography, Empty } from 'antd';
+import { ApiOutlined, FileTextOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -13,10 +14,8 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   const { id, data } = props;
   const { updateNodeData } = useCanvasStore();
 
-  // 从节点数据中初始化状态
   const [asset, setAsset] = useState<any>(data.asset || null);
 
-  // 监听外部数据变化（如撤销/重做时）
   useEffect(() => {
     if (data.asset) {
       setAsset(data.asset);
@@ -37,8 +36,6 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     console.log('📦 Asset dropped:', droppedAsset);
     setAsset(droppedAsset);
 
-    // 1. 根据资产类型定义输出端口
-    // 这里的逻辑对应项目书中的“资产驱动”：不同资产产生不同输出
     const outputType = droppedAsset.type === 'prompt' ? 'text' : droppedAsset.type;
 
     const newOutputPorts = {
@@ -48,7 +45,6 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
       }
     };
 
-    // 2. 更新全局 Store 中的节点数据
     updateNodeData(id, {
       asset: droppedAsset,
       outputs: newOutputPorts,
@@ -59,7 +55,6 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   const renderPreview = () => {
     if (!asset) return <Empty description="拖拽资产到此" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
 
-    // 处理预览 URL（如果是本地路径，后端需要提供静态资源服务映射）
     const previewUrl = asset.thumbnail || (asset.data?.file_path ? `http://localhost:8000/${asset.data.file_path}` : null);
 
     return (
@@ -67,23 +62,57 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
         {asset.type === 'image' && previewUrl && (
           <img src={previewUrl} alt="preview" style={{ maxWidth: '100%', borderRadius: 4 }} />
         )}
+
         {asset.type === 'video' && previewUrl && (
           <video src={previewUrl} style={{ maxWidth: '100%' }} controls={false} autoPlay muted loop />
         )}
+
+        {/* 提示词的展示 UI */}
         {asset.type === 'prompt' && (
           <div style={{
-            background: '#f5f5f5',
-            padding: '4px 8px',
-            borderRadius: 4,
+            background: '#f6ffed', // 浅绿色背景
+            padding: '6px 8px',
+            borderRadius: 6,
+            border: '1px solid #b7eb8f',
             fontSize: '12px',
+            color: '#389e0d',
             maxHeight: '60px',
             overflow: 'hidden',
-            textOverflow: 'ellipsis'
+            textOverflow: 'ellipsis',
+            textAlign: 'left'
           }}>
+            <FileTextOutlined style={{ marginRight: 4 }} />
             {asset.data?.content || asset.name}
           </div>
         )}
-        <Text type="secondary" style={{ fontSize: 10 }}>ID: {asset.id}</Text>
+
+        {/* 🌟 核心修复：为工作流 (workflow) 添加绝美的展示 UI */}
+        {asset.type === 'workflow' && (
+          <div style={{
+            background: '#f9f0ff', // 浅紫色背景
+            padding: '8px',
+            borderRadius: 6,
+            border: '1px solid #d3adf7',
+            color: '#531dab',
+            fontSize: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '4px'
+          }}>
+            <div style={{ fontWeight: 'bold' }}>
+              <ApiOutlined style={{ marginRight: 4 }} />
+              {asset.name || "工作流模板"}
+            </div>
+            <div style={{ fontSize: '10px', color: '#9254de' }}>
+              (JSON 配置已加载)
+            </div>
+          </div>
+        )}
+
+        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 8 }}>
+          资产 ID: {asset.id}
+        </Text>
       </div>
     );
   };
@@ -92,12 +121,13 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     <BaseNode {...props}>
       <div
         ref={drop}
-        className="nodrag" // 内部交互不触发画布拖拽
+        className="nodrag"
         style={{
           minHeight: 80,
+          minWidth: 120,
           border: isOver ? '2px dashed #1890ff' : '1px dashed #d9d9d9',
-          borderRadius: 4,
-          padding: 8,
+          borderRadius: 8,
+          padding: '12px 8px',
           background: isOver ? '#f0f7ff' : '#fafafa',
           transition: 'all 0.3s'
         }}
@@ -108,11 +138,10 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   );
 };
 
-// 注册节点到注册表
 if (!nodeRegistry.get('load_asset')) {
   nodeRegistry.register({
     type: 'load_asset',
-    displayName: '加载资产',
+    displayName: '📦 加载资产',
     component: LoadAssetNode,
     defaultData: {
       label: '加载资产',

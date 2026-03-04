@@ -1,4 +1,5 @@
 # backend/core/adapters/comfyui.py
+
 import asyncio
 import httpx
 import json
@@ -7,7 +8,6 @@ from .base import BaseAdapter
 from backend.core.registry import ProviderRegistry
 
 
-# 🌟 神奇的统一：同时注册给本地和云端！
 @ProviderRegistry.register_adapter("local_comfyui")
 @ProviderRegistry.register_adapter("runninghub")
 class ComfyUIAdapter(BaseAdapter):
@@ -25,24 +25,31 @@ class ComfyUIAdapter(BaseAdapter):
         """
         # 1. 动态构建真正的 API 地址
         if "runninghub" in str(base_url).lower():
-            # 兼容 RunningHub 的原生代理接口规范
             is_plus = extra_params.get("instanceType") == "plus"
             proxy_path = "proxy-plus" if is_plus else "proxy"
             actual_base_url = f"https://www.runninghub.cn/{proxy_path}/{api_key}"
         else:
-            # 兼容本地 127.0.0.1 或 自定义中转站
             actual_base_url = (base_url or "http://127.0.0.1:8188").rstrip('/')
 
         prompt_url = f"{actual_base_url}/prompt"
         history_url = f"{actual_base_url}/history"
 
-        # 2. 准备原生 ComfyUI 的 payload
+        # 2. 🌟 核心防傻与智能“脱壳”逻辑（移至后端）
         try:
-            workflow_json = json.loads(prompt) if isinstance(prompt, str) else prompt
+            # 先将前端传来的字符串反序列化为 Python 字典
+            parsed_prompt = json.loads(prompt) if isinstance(prompt, str) else prompt
+
+            # 智能脱壳：如果发现最外层包了 "workflow_json" 这个壳子，就提取里面的纯净节点字典
+            if isinstance(parsed_prompt, dict) and "workflow_json" in parsed_prompt:
+                actual_workflow = parsed_prompt["workflow_json"]
+            else:
+                actual_workflow = parsed_prompt
+
         except Exception:
             raise ValueError("提交给 ComfyUI 的 prompt 必须是有效的 Workflow JSON")
 
-        payload = {"prompt": workflow_json}
+        # 组装发给原生 ComfyUI 的最终 Payload
+        payload = {"prompt": actual_workflow}
 
         async with httpx.AsyncClient() as client:
             try:
@@ -51,7 +58,7 @@ class ComfyUIAdapter(BaseAdapter):
                 submit_res = await client.post(prompt_url, json=payload, timeout=15.0)
 
                 if submit_res.status_code != 200:
-                    raise RuntimeError(f"节点提交失败: {submit_res.text}")
+                    raise RuntimeError(f"节点提交失败 (HTTP {submit_res.status_code}): {submit_res.text}")
 
                 prompt_id = submit_res.json().get("prompt_id")
                 if not prompt_id:
@@ -60,7 +67,6 @@ class ComfyUIAdapter(BaseAdapter):
                 print(f"✅ [ComfyUI Engine] 提交成功 | Prompt ID: {prompt_id} | 开始轮询...")
 
                 # ================= 阶段 2：轮询执行结果 =================
-                # 根据生成复杂度和显存，最多轮询 120 次（比如每次 3 秒，共 6 分钟）
                 for _ in range(120):
                     await asyncio.sleep(3)
 
@@ -68,15 +74,13 @@ class ComfyUIAdapter(BaseAdapter):
                     if history_res.status_code == 200:
                         history_data = history_res.json()
 
-                        # 如果返回的历史记录中包含了我们的 prompt_id，说明已完成
                         if prompt_id in history_data:
                             print(f"🎉 [ComfyUI Engine] 渲染完成！")
-                            # 获取最终的输出节点数据
                             outputs = history_data[prompt_id].get("outputs", {})
 
                             return {
                                 "type": type,
-                                "content": outputs,  # 这里返回的是 ComfyUI 的输出字典格式，方便外部二次解析
+                                "content": outputs,
                                 "task_id": prompt_id
                             }
 

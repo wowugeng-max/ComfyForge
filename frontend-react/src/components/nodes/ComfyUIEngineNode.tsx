@@ -1,19 +1,21 @@
-// src/components/Nodes/ComfyUIEngineNode.tsx
+// src/components/nodes/ComfyUIEngineNode.tsx
 import React, { useState, useEffect } from 'react';
-import { Handle, Position } from 'reactflow';
-import { Select, Input, Button, Card, message, Typography, Space } from 'antd';
+import { Handle, Position, type NodeProps } from 'reactflow';
+import { Select, Input, Button, message, Typography } from 'antd';
 import { PlayCircleOutlined, ApiOutlined, CloudServerOutlined } from '@ant-design/icons';
 import { providerApi } from '../../api/providers';
 import { keyApi } from '../../api/keys';
 import apiClient from '../../api/client';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { useDrop } from 'react-dnd';
-import { DndItemTypes } from '../../constants/dnd'; // 确保路径正确
+import { DndItemTypes } from '../../constants/dnd';
+import { BaseNode } from './BaseNode'; // 🌟 核心：引入你项目原生的基础节点外壳！
 
 const { Text } = Typography;
 const { TextArea } = Input;
 
-export default function ComfyUIEngineNode({ data, id }: any) {
+export default function ComfyUIEngineNode(props: NodeProps) {
+  const { data, id } = props;
   const [providers, setProviders] = useState<any[]>([]);
   const [keys, setKeys] = useState<any[]>([]);
 
@@ -22,27 +24,21 @@ export default function ComfyUIEngineNode({ data, id }: any) {
   const [workflowJson, setWorkflowJson] = useState<string>(data.workflowJson || '');
 
   const [isRunning, setIsRunning] = useState(false);
-  const [resultImage, setResultImage] = useState<any>(null); // 存放输出结果
+  const [resultImage, setResultImage] = useState<any>(null);
 
-  // 🌟 核心魔法：让当前节点变成一个可以接收拖拽的靶子！
+  // 🌟 参考 LoadAssetNode 的拖拽监听方式
   const [{ isOver }, drop] = useDrop(() => ({
     accept: DndItemTypes.ASSET,
     drop: (item: any) => {
       const asset = item.asset;
-      // 🌟 关键修复：允许接收类型为 workflow 的资产
       if (asset && (asset.type === 'workflow' || asset.type === 'prompt')) {
-
-        // 根据你后端的结构，如果是 JSON 字符串，可能存在 asset.data 里面，或者直接就是 asset.content
-        // 如果拖进来的是 "[object Object]" 这种错误格式，你可以用 JSON.stringify 兜底转换一下：
         let jsonContent = '';
         const rawContent = asset.data?.content || asset.content || asset.data || '';
-
         if (typeof rawContent === 'object') {
              jsonContent = JSON.stringify(rawContent, null, 2);
         } else {
              jsonContent = String(rawContent);
         }
-
         setWorkflowJson(jsonContent);
         message.success(`成功加载工作流: ${asset.name}`);
       } else {
@@ -54,12 +50,11 @@ export default function ComfyUIEngineNode({ data, id }: any) {
     }),
   }));
 
-  // 加载基础数据
   useEffect(() => {
     const fetchInitData = async () => {
       try {
         const [provRes, keyRes] = await Promise.all([
-          providerApi.getAll('comfyui'), // 🌟 只拉取算力引擎
+          providerApi.getAll('comfyui'),
           keyApi.getAll()
         ]);
         setProviders(provRes.data);
@@ -71,111 +66,107 @@ export default function ComfyUIEngineNode({ data, id }: any) {
     fetchInitData();
   }, []);
 
-  // 动态过滤 Key
   const availableKeys = keys.filter(
     k => k.provider.toLowerCase() === selectedProvider?.toLowerCase() && k.is_active
   );
 
   const handleRun = async () => {
-    if (!selectedProvider || !selectedKeyId) return message.warning('请选择算力平台和凭证');
-    if (!workflowJson.trim()) return message.warning('请输入 Workflow JSON');
-
-    try { JSON.parse(workflowJson); } catch (e) { return message.error('JSON 格式不正确'); }
+    if (!selectedProvider || !selectedKeyId) return message.warning('请选择平台和凭证');
+    if (!workflowJson.trim()) return message.warning('请输入工作流');
 
     setIsRunning(true);
     setResultImage(null);
 
     try {
-      // 🌟 发送标准请求给大一统路由
       const res = await apiClient.post('/generate', {
         api_key_id: selectedKeyId,
         provider: selectedProvider,
         model: 'comfyui-workflow',
         type: 'image',
         prompt: workflowJson,
-        params: { provider: selectedProvider } // 传给后端辅助判断
+        params: { provider: selectedProvider }
       });
-
       message.success('渲染成功！');
-      console.log('引擎完整输出:', res.data.content);
-
-      // 这里的具体解析视你工作流里用的 Save 节点而定
-      // 暂时把原始数据存下来，你可以在控制台查看结构，方便下一步提取图片 URL
       setResultImage(JSON.stringify(res.data.content, null, 2));
-
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '渲染执行失败');
+      message.error(error.response?.data?.detail || '执行失败');
     } finally {
       setIsRunning(false);
     }
   };
 
   return (
-    <Card
-        ref={drop} // 🌟 关键：把 drop 挂载到这里
-      size="small"
-      title={<><CloudServerOutlined /> 算力引擎</>}
-      style={{ width: 350, borderRadius: 12,// 🌟 添加交互反馈：如果有东西拖到上面，边框变成蓝色虚线
-        border: isOver ? '2px dashed #1890ff' : '1px solid #f0f0f0',
-        backgroundColor: isOver ? '#e6f7ff' : '#fff',
-        transition: 'all 0.3s' }}
-    >
+    // 🌟 核心修复：使用 BaseNode 作为外壳，保持 UI 统一
+    <BaseNode {...props}>
       <Handle type="target" position={Position.Left} id="in" />
 
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        <div>
-          <Text type="secondary" style={{ fontSize: 12 }}>算力提供商</Text>
-          <Select
-            style={{ width: '100%' }}
-            placeholder="选择本地节点或云算力"
-            options={providers.map(p => ({ label: p.display_name, value: p.id }))}
-            value={selectedProvider}
-            onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); }}
-          />
-        </div>
-
-        <div>
-          <Text type="secondary" style={{ fontSize: 12 }}>执行凭证 (API Key)</Text>
-          <Select
-            style={{ width: '100%' }}
-            placeholder={selectedProvider ? "选择凭证" : "请先选择平台"}
-            options={availableKeys.map(k => ({ label: `${k.description || '凭证'} (ID:${k.id})`, value: k.id }))}
-            value={selectedKeyId}
-            onChange={setSelectedKeyId}
-            disabled={!selectedProvider}
-          />
-        </div>
-
-        <div>
-          <Text type="secondary" style={{ fontSize: 12 }}><ApiOutlined /> Workflow JSON (API)</Text>
-          <TextArea
-            rows={5}
-            placeholder="粘贴从 ComfyUI 导出的 API JSON..."
-            value={workflowJson}
-            onChange={(e) => setWorkflowJson(e.target.value)}
-          />
-        </div>
-
-        <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun}>
-          {isRunning ? '引擎轰鸣中...' : '提交渲染'}
-        </Button>
-
-        {resultImage && (
-          <div style={{ marginTop: 10, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 150, overflowY: 'auto' }}>
-            <Text type="secondary" style={{ fontSize: 10 }}>输出结果 (供调试):</Text>
-            <pre style={{ fontSize: 10, margin: 0 }}>{resultImage}</pre>
+      {/* 🌟 完全模仿 LoadAssetNode：内部用 div 接 ref，并加上 nodrag 阻挡画布拦截 */}
+      <div
+        ref={drop}
+        className="nodrag"
+        style={{
+          width: 280,
+          padding: 8,
+          border: isOver ? '2px dashed #1890ff' : '1px dashed transparent',
+          backgroundColor: isOver ? '#f0f7ff' : 'transparent',
+          transition: 'all 0.3s',
+          borderRadius: 6
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>算力提供商</Text>
+            <Select
+              style={{ width: '100%' }}
+              placeholder="选择本地节点或云算力"
+              options={providers.map(p => ({ label: p.display_name, value: p.id }))}
+              value={selectedProvider}
+              onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); }}
+            />
           </div>
-        )}
-      </Space>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>执行凭证</Text>
+            <Select
+              style={{ width: '100%' }}
+              placeholder={selectedProvider ? "选择凭证" : "请先选择平台"}
+              options={availableKeys.map(k => ({ label: `${k.description || '凭证'}`, value: k.id }))}
+              value={selectedKeyId}
+              onChange={setSelectedKeyId}
+              disabled={!selectedProvider}
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}><ApiOutlined /> 工作流数据</Text>
+            <TextArea
+              rows={4}
+              placeholder="将左侧的工作流资产拖拽到这里..."
+              value={workflowJson}
+              onChange={(e) => setWorkflowJson(e.target.value)}
+            />
+          </div>
+
+          <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun}>
+            {isRunning ? '引擎轰鸣中...' : '提交渲染'}
+          </Button>
+
+          {resultImage && (
+            <div style={{ marginTop: 8, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 100, overflowY: 'auto' }}>
+              <pre style={{ fontSize: 10, margin: 0 }}>{resultImage}</pre>
+            </div>
+          )}
+        </div>
+      </div>
 
       <Handle type="source" position={Position.Right} id="out" />
-    </Card>
+    </BaseNode>
   );
 }
 
 nodeRegistry.register({
   type: 'comfyUIEngine',
-  displayName: '🚀 ComfyUI 引擎', // 这就是会在你左侧菜单里显示出来的名字！
+  displayName: '🚀 算力引擎',
   component: ComfyUIEngineNode,
   defaultData: { workflowJson: '' }
 });

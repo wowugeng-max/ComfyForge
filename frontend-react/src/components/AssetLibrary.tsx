@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Input, Select, Spin, List, Tag, Typography, Badge, Empty, Tooltip } from 'antd';
+// 🌟 核心修复 1：从 antd 导入中彻底删除了废弃的 List
+import { Input, Select, Spin, Tag, Typography, Badge, Empty, Tooltip } from 'antd';
 import { useAssetLibraryStore, type Asset } from '../stores/assetLibraryStore';
 import { useDrag } from 'react-dnd';
 import { DndItemTypes } from '../constants/dnd';
@@ -24,25 +25,28 @@ const AssetLibrary: React.FC = () => {
     fetchAssets();
   }, [fetchAssets]);
 
-  // 提取所有资产中的唯一标签
   const allTags = useMemo(() => {
     const tags = new Set<string>();
     assets.forEach(asset => {
-      if (asset.data?.tags && Array.isArray(asset.data.tags)) {
-        asset.data.tags.forEach((t: string) => tags.add(t));
+      if (asset.tags && Array.isArray(asset.tags)) {
+        asset.tags.forEach((t: string) => tags.add(t));
       }
     });
     return Array.from(tags);
   }, [assets]);
 
-  // 组合过滤逻辑
   const filteredAssets = useMemo(() => {
     return assets.filter(asset => {
       const matchType = !filterType || asset.type === filterType;
+
+      const safeName = asset.name || '';
+      const contentText = typeof asset.data?.content === 'string' ? asset.data.content : '';
+
       const matchSearch = !searchText ||
-        asset.name.toLowerCase().includes(searchText.toLowerCase()) ||
-        asset.data?.content?.toLowerCase().includes(searchText.toLowerCase());
-      const matchTag = !selectedTag || (asset.data?.tags && asset.data.tags.includes(selectedTag));
+        safeName.toLowerCase().includes(searchText.toLowerCase()) ||
+        contentText.toLowerCase().includes(searchText.toLowerCase());
+
+      const matchTag = !selectedTag || (asset.tags && asset.tags.includes(selectedTag));
 
       return matchType && matchSearch && matchTag;
     });
@@ -76,7 +80,6 @@ const AssetLibrary: React.FC = () => {
             <Option value="image"><PictureOutlined /> 图像</Option>
             <Option value="prompt"><FileTextOutlined /> 提示词</Option>
             <Option value="video"><VideoCameraOutlined /> 视频</Option>
-            {/* 🌟 新增下面这一行，让侧边栏支持筛选 workflow */}
             <Option value="workflow"><ApiOutlined /> 工作流</Option>
           </Select>
 
@@ -93,15 +96,19 @@ const AssetLibrary: React.FC = () => {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
         {loading ? (
-          <div style={{ textAlign: 'center', padding: 20 }}><Spin tip="加载资产中..." /></div>
+          <div style={{ textAlign: 'center', padding: 20 }}>
+            {/* 🌟 核心修复 2：用 description 替换了废弃的 tip */}
+            <Spin description="加载资产中..." />
+          </div>
         ) : filteredAssets.length > 0 ? (
-          <List
-            dataSource={filteredAssets}
-            renderItem={(asset) => <AssetItem key={asset.id} asset={asset} />}
-            split={false}
-          />
+          /* 🌟 核心修复 3：彻底抛弃 List，用原生 div 遍历渲染，绝对不会被拦截 */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {filteredAssets.map(asset => (
+              <AssetItem key={asset.id} asset={asset} />
+            ))}
+          </div>
         ) : (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未找到相关资产" />
         )}
@@ -125,11 +132,10 @@ const AssetItem: React.FC<{ asset: Asset }> = ({ asset }) => {
       case 'video': return <VideoCameraOutlined style={{ color: '#eb2f96' }} />;
       case 'prompt': return <FileTextOutlined style={{ color: '#52c41a' }} />;
       case 'workflow': return <ApiOutlined style={{ color: '#722ed1' }} />;
-      default: return null;
+      default: return <FileTextOutlined />;
     }
   };
 
-  // 简单的预览处理
   const preview = asset.thumbnail || (asset.type === 'image' ? asset.data?.file_path : null);
 
   return (
@@ -137,13 +143,12 @@ const AssetItem: React.FC<{ asset: Asset }> = ({ asset }) => {
       ref={drag}
       style={{
         padding: '8px 12px',
-        marginBottom: 8,
         border: '1px solid #f0f0f0',
         borderRadius: 6,
         background: isDragging ? '#e6f7ff' : '#fff',
         cursor: 'grab',
         transition: 'all 0.2s',
-        boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+        boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.1)' : '0 1px 2px rgba(0,0,0,0.02)',
       }}
       className="asset-item-hover"
     >
@@ -163,7 +168,7 @@ const AssetItem: React.FC<{ asset: Asset }> = ({ asset }) => {
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <Tooltip title={asset.name} placement="right">
             <Text strong style={{ fontSize: 13, display: 'block' }} ellipsis>
-              {asset.name}
+              {asset.name || '未命名资产'}
             </Text>
           </Tooltip>
           <Text type="secondary" style={{ fontSize: 11 }}>
@@ -172,10 +177,10 @@ const AssetItem: React.FC<{ asset: Asset }> = ({ asset }) => {
         </div>
       </div>
 
-      {asset.data?.tags && asset.data.tags.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          {asset.data.tags.slice(0, 2).map((tag: string) => (
-            <Tag key={tag} style={{ fontSize: 10, marginInlineEnd: 4, paddingInline: 4 }}>{tag}</Tag>
+      {asset.tags && asset.tags.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          {asset.tags.slice(0, 3).map((tag: string) => (
+            <Tag key={tag} style={{ fontSize: 10, marginInlineEnd: 4, paddingInline: 4, border: 'none', background: '#f5f5f5' }}>{tag}</Tag>
           ))}
         </div>
       )}

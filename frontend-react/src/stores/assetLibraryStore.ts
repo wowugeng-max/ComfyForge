@@ -29,7 +29,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>((set, get) => ({
     try {
       const res = await apiClient.get('/assets/');
       // 过滤出需要的类型
-      const assets = res.data.filter((a: any) => ['image', 'prompt', 'video'].includes(a.type));
+      const assets = res.data.filter((a: any) => ['image', 'prompt', 'video','workflow'].includes(a.type));
       set({ assets });
     } catch (error) {
       console.error('加载资产失败', error);
