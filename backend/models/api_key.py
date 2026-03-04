@@ -11,6 +11,9 @@ class APIKey(Base):
     provider = Column(String(50), nullable=False)  # Qwen, Gemini, Grok, Hailuo, etc.
     key = Column(Text, nullable=False)  # 实际的API Key
     description = Column(String(200), default="")  # 备注
+    # 🌟 新增：服务类型与自定义网关
+    service_type = Column(String, default="llm")  # 枚举: 'llm' 或 'comfyui'
+    base_url = Column(String, nullable=True)  # 中转站或云端算力的自定义URL
     is_active = Column(Boolean, default=True)  # 是否启用
 
     # 额度信息

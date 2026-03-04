@@ -8,60 +8,9 @@ from datetime import datetime
 from ..db import get_db  # 统一导入
 from ..models.api_key import APIKey
 from ..core.key_tester import test_key
+from ..models.schemas import APIKeyCreate, APIKeyUpdate, APIKeyOut
 
 router = APIRouter(prefix="/api/keys", tags=["keys"])
-
-# Pydantic 模型
-class APIKeyBase(BaseModel):
-    provider: str
-    key: str
-    description: Optional[str] = ""
-    is_active: Optional[bool] = True
-    priority: Optional[int] = 0
-    tags: Optional[List[str]] = []
-    quota_total: Optional[int] = 0
-    quota_unit: Optional[str] = "count"
-    price_per_call: Optional[float] = 0.0
-
-class APIKeyCreate(APIKeyBase):
-    pass
-
-class APIKeyUpdate(BaseModel):
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
-    priority: Optional[int] = None
-    tags: Optional[List[str]] = None
-
-class APIKeyOut(APIKeyBase):
-    id: int
-    quota_remaining: int
-    success_count: int
-    failure_count: int
-    avg_latency: float
-    last_used: Optional[datetime]
-    last_checked: datetime
-    created_at: datetime
-    expires_at: Optional[datetime]
-
-    class Config:
-        from_attributes = True
-
-    # Validators to convert None to appropriate default values
-    @validator('quota_remaining', pre=True, always=True)
-    def validate_quota_remaining(cls, v):
-        return v if v is not None else 0
-
-    @validator('success_count', pre=True, always=True)
-    def validate_success_count(cls, v):
-        return v if v is not None else 0
-
-    @validator('failure_count', pre=True, always=True)
-    def validate_failure_count(cls, v):
-        return v if v is not None else 0
-
-    @validator('avg_latency', pre=True, always=True)
-    def validate_avg_latency(cls, v):
-        return v if v is not None else 0.0
 
 # 创建Key
 @router.post("/", response_model=APIKeyOut)
@@ -76,7 +25,10 @@ def create_key(key: APIKeyCreate, db: Session = Depends(get_db)):
         quota_total=key.quota_total,
         quota_remaining=key.quota_total,  # 初始剩余等于总配额
         quota_unit=key.quota_unit,
-        price_per_call=key.price_per_call
+        price_per_call=key.price_per_call,
+        # 🌟 补上这两个新字段存入数据库
+        service_type = key.service_type,
+        base_url = key.base_url
     )
     db.add(db_key)
     db.commit()

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { type NodeProps } from 'reactflow';
+import { type NodeProps,useReactFlow, Handle, Position } from 'reactflow';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Segmented, Space, Slider } from 'antd';
@@ -11,8 +11,9 @@ const { TextArea } = Input;
 const { Text } = Typography;
 
 const GenerateNode: React.FC<NodeProps> = (props) => {
-  const { id, data } = props;
+  const { id, data,isConnectable } = props;
   const { updateNodeData } = useCanvasStore();
+  const { getEdges, setNodes } = useReactFlow();
 
   const [loading, setLoading] = useState(false);
   const [keys, setKeys] = useState<any[]>([]);
@@ -34,9 +35,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
     setGenerating(true);
     try {
-      // 从 keys 列表里找出当前选中 Key 的 provider (例如 'Gemini')
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
-
       const payload = {
         api_key_id: selectedKey,
         provider: selectedProvider,
@@ -46,14 +45,31 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         params: params
       };
 
-      // 调用后端生成接口
+      // 1. 调用后端生成接口
       const res = await apiClient.post('/generate', payload);
-
       message.success('生成成功！');
       console.log('🎉 节点生成结果:', res.data);
 
-      // 可以将生成结果存入节点的全局数据中，方便连线传给下一个节点
+      // 2. 将结果保存到自己节点的状态中
       updateNodeData(id, { ...data, result: res.data });
+
+      // 🌟 3. 核心魔法：数据顺藤摸瓜（沿着连线传递给下游节点）
+      const edges = getEdges();
+      // 找出所有从当前节点（source）出发的连线
+      const connectedEdges = edges.filter(e => e.source === id);
+
+      if (connectedEdges.length > 0) {
+        setNodes((nds) =>
+          nds.map((node) => {
+            // 如果这个节点是我们连线的终点（target）
+            if (connectedEdges.find(e => e.target === node.id)) {
+              // 把生成结果强行注入给它的 data.result
+              return { ...node, data: { ...node.data, result: res.data } };
+            }
+            return node;
+          })
+        );
+      }
 
     } catch (error: any) {
       const errorMsg = error.response?.data?.detail || '调用模型失败，请检查网络或 Key 额度';
@@ -158,6 +174,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   return (
     <BaseNode {...props}>
+      {/* 🌟 加上左侧输入圆点（为以后接收前置“提示词节点”做准备） */}
+      <Handle type="target" position={Position.Left} isConnectable={isConnectable} id="in" />
       <div style={{ width: 220 }}>
         {/* 模式切换 */}
         <Segmented
@@ -235,6 +253,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           )}
         </Space>
       </div>
+      {/* 🌟 核心修复：加上右侧输出圆点！ */}
+      <Handle type="source" position={Position.Right} isConnectable={isConnectable} id="out" />
     </BaseNode>
   );
 };
