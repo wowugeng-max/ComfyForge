@@ -8,29 +8,32 @@ from .syncers.gemini_syncer import GeminiSyncer
 # 如果未来有其他平台的 Syncer，在这里导入即可
 
 class ModelSyncer:
-    # 核心修复点：这里就是缺失的插件注册表 SYNCER_MAP
+    # 🌟 内部注册表统一使用小写
     SYNCER_MAP = {
-        "Gemini": GeminiSyncer,
-        # "OpenAI": OpenAISyncer, # 后续扩展可以直接加在这里
+        "gemini": GeminiSyncer,
+        # "openai": OpenAISyncer,
     }
 
     @classmethod
     async def sync_provider(cls, db: Session, provider: str, api_key: str, key_id: int) -> int:
+        # 🌟 强制转小写，实现完全防呆
+        provider_lower = provider.lower() if provider else ""
+
         # 获取对应平台的同步器
-        syncer_cls = cls.SYNCER_MAP.get(provider)
+        syncer_cls = cls.SYNCER_MAP.get(provider_lower)
         if not syncer_cls:
             raise ValueError(f"暂不支持该供应商的自动同步: {provider}")
 
         syncer = syncer_cls()
 
+        # ... 下面的代码保持不变 (抓取远程模型、更新数据库等)
         # 抓取远程模型列表
         remote_models = await syncer.fetch_remote_models(api_key)
 
-        # 1. 软删除机制：先把这个 Key 下的所有模型标记为未激活 (防止有些模型被官方下架)
-        # 🌟 核心修改：只把“非手动（同步来）”的模型标记为失效，保护手动模型！
+        # 1. 软删除机制：先把这个 Key 下的所有模型标记为未激活
         db.query(ModelConfig).filter(
             ModelConfig.api_key_id == key_id,
-            ModelConfig.is_manual == False  # 加了这一个过滤条件
+            ModelConfig.is_manual == False
         ).update({"is_active": False})
 
         count = 0
@@ -49,10 +52,10 @@ class ModelSyncer:
             if not db_model:
                 # 插入全新的模型记录
                 db_model = ModelConfig(
-                    provider=provider,
+                    provider=provider,  # 存入数据库的可以保持原样
                     model_name=m_id,
                     display_name=rm.get("display_name", m_id),
-                    api_key_id=key_id,  # 严格绑定 Key
+                    api_key_id=key_id,
                     capabilities=caps,
                     context_ui_params=ui_params,
                     is_active=True,

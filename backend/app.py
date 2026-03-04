@@ -225,7 +225,9 @@ async def generate_content(request: GenerateRequest, db: Session = Depends(get_d
             model_name=request.model,  # 前端选中的具体模型名称 (如 gemini-1.5-pro)
             prompt=request.prompt,
             type=request.type,
-            extra_params=request.params or {}
+            extra_params=request.params or {},
+        # 🌟 核心修复：连通大动脉，将数据库中的 URL 传给底层适配器
+            base_url = key_record.base_url
         )
     except Exception as e:
         # 捕获官方 SDK 抛出的网络错误或额度超限等异常

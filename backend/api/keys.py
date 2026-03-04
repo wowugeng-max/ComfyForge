@@ -59,15 +59,20 @@ def get_key(key_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Key not found")
     return key
 
+
 # 更新Key
 @router.put("/{key_id}", response_model=APIKeyOut)
 def update_key(key_id: int, update: APIKeyUpdate, db: Session = Depends(get_db)):
     key = db.query(APIKey).filter(APIKey.id == key_id).first()
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
+
+    # exclude_unset=True 确保前端没传的字段(比如只更新描述时没传URL)，不会被覆盖为空
     update_data = update.dict(exclude_unset=True)
+
     for field, value in update_data.items():
         setattr(key, field, value)
+
     db.commit()
     db.refresh(key)
     return key

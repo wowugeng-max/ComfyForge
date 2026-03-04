@@ -5,15 +5,15 @@ from typing import Dict, Any, Optional
 
 def test_key(provider: str, key: str) -> Dict[str, Any]:
     """统一测试入口，返回结果字典包含valid, quota_remaining, message等"""
-    if provider == "Qwen":
+    if provider.lower() == "qwen":
         return test_qwen_key(key)
-    elif provider == "Gemini":
+    elif provider.lower() == "gemini":
         return test_gemini_key(key)
-    elif provider == "Grok":
+    elif provider.lower() == "grok":
         return test_grok_key(key)
-    elif provider == "Hailuo":
+    elif provider.lower() == "hailuo":
         return test_hailuo_key(key)
-    elif provider == "OpenAI":
+    elif provider.lower() == "openai":
         return test_openai_key(key)
     else:
         return {"valid": False, "message": f"Unsupported provider: {provider}"}

@@ -16,7 +16,7 @@ import {
   Tooltip,
   Drawer,
   Checkbox,
-  Spin
+  Spin, Radio
 } from 'antd';
 import {
   PlusOutlined,
@@ -36,20 +36,45 @@ import type { APIKey } from '../../types/key';
 const { Option } = Select;
 const { Text } = Typography;
 
-const providerOptions = [
-  { value: 'Qwen', label: 'Qwen' },
-  { value: 'Gemini', label: 'Gemini' },
-  { value: 'Grok', label: 'Grok' },
-  { value: 'OpenAI', label: 'OpenAI' },
-  { value: 'DeepSeek', label: 'DeepSeek' },
-];
-
 export default function KeyManager() {
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingKey, setEditingKey] = useState<APIKey | null>(null);
   const [form] = Form.useForm();
+
+  // 🌟 核心魔法：实时监听表单字段的变化
+  const serviceType = Form.useWatch('service_type', form);
+  const provider = Form.useWatch('provider', form);
+
+  // 1. 动态生成提供商列表
+  const providerOptions = serviceType === 'comfyui'
+    ? [
+        { label: 'RunningHub 云端', value: 'runninghub' },
+        { label: 'Vivita 云算力', value: 'vivita' },
+        { label: '本地 / 自建节点', value: 'local_comfyui' },
+      ]
+    : [
+        { label: 'Google Gemini', value: 'gemini' },
+        { label: '阿里千问 (Qwen)', value: 'qwen' },
+        { label: '字节豆包 (Doubao)', value: 'doubao' },
+        { label: 'OpenAI', value: 'openai' },
+        { label: '自定义 / 中转站 (Custom)', value: 'custom_llm' },
+      ];
+
+  // 2. 动态判断 Base URL 是否可编辑
+  // 规则：中转站 (custom_llm) 或 任何 ComfyUI 算力都可以编辑，官方大模型置灰
+  //const isBaseUrlEditable = provider === 'custom_llm' || serviceType === 'comfyui';
+  // 🌟 听你的！彻底解开封印：所有类型都允许填写自定义 URL（以支持透明反代）
+  const isBaseUrlEditable = true;
+
+  // 3. 动态判断 Key 是否必填 (家里的本地 ComfyUI 通常没有密码)
+  const isKeyRequired = provider !== 'local_comfyui';
+
+  // 监听服务类型切换时，清空下方的提供商选择
+  const handleServiceTypeChange = () => {
+    form.setFieldsValue({ provider: undefined, base_url: undefined });
+  };
 
   const [testLoading, setTestLoading] = useState<number | null>(null);
   const [syncLoading, setSyncLoading] = useState<number | null>(null);
@@ -283,7 +308,8 @@ export default function KeyManager() {
             <Button size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
           </Tooltip>
 
-          {record.provider === 'Gemini' && (
+          {/* 只要是官方大模型 (目前限制了 gemini)，就显示同步按钮 */}
+          {['gemini', 'qwen', 'doubao', 'openai'].includes(record.provider?.toLowerCase() || '') && record.service_type === 'llm' && (
             <Tooltip title="同步官方模型列表">
               <Button size="small" type="dashed" icon={<CloudSyncOutlined />} loading={syncLoading === record.id} onClick={() => handleSyncModels(record)} />
             </Tooltip>
@@ -399,12 +425,70 @@ export default function KeyManager() {
 
       {/* ================= Key 编辑 Modal ================= */}
       <Modal title={editingKey ? '编辑 API Key' : '添加 API Key'} open={modalVisible} onOk={handleModalOk} onCancel={() => setModalVisible(false)} destroyOnHidden>
-        <Form form={form} layout="vertical">
-          <Form.Item name="provider" label="提供商" rules={[{ required: true }]}><Select placeholder="选择 AI 供应商">{providerOptions.map(p => <Option key={p.value} value={p.value}>{p.label}</Option>)}</Select></Form.Item>
-          <Form.Item name="key" label="API Key" rules={[{ required: true }]}><Input.Password placeholder="填入 API Key" /></Form.Item>
-          <Form.Item name="description" label="备注"><Input /></Form.Item>
-          <Form.Item name="is_active" label="启用状态" valuePropName="checked" initialValue={true}><Switch /></Form.Item>
-          <Form.Item name="quota_total" label="总配额" initialValue={0}><InputNumber style={{ width: '100%' }} /></Form.Item>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{
+            is_active: true,
+            quota_total: 0,
+            service_type: 'llm' // 默认选大模型
+          }}
+        >
+          {/* 🌟 新增：服务大类选择 */}
+          <Form.Item name="service_type" label="服务大类">
+            <Radio.Group onChange={handleServiceTypeChange} optionType="button" buttonStyle="solid">
+              <Radio value="llm">🤖 大模型 API</Radio>
+              <Radio value="comfyui">🚀 ComfyUI 算力</Radio>
+            </Radio.Group>
+          </Form.Item>
+
+          <Form.Item
+            name="provider"
+            label="提供商"
+            rules={[{ required: true, message: '请选择提供商' }]}
+          >
+            <Select options={providerOptions} placeholder="请选择平台" />
+          </Form.Item>
+
+          {/* 🌟 动态 Base URL 输入框：解开 disabled 限制，优化 placeholder 提示 */}
+          <Form.Item
+            name="base_url"
+            label="自定义网关 (Base URL)"
+            // 只有中转站或 ComfyUI 时才是必填，官方大模型是选填（留空则走官方默认）
+            rules={[{ required: provider === 'custom_llm' || serviceType === 'comfyui', message: '该类型必须填写网关地址' }]}
+          >
+            <Input
+              placeholder={
+                serviceType === 'comfyui'
+                  ? '例如: http://127.0.0.1:8188'
+                  : (provider === 'custom_llm'
+                      ? '例如: https://api.proxy.com/v1 (兼容 OpenAI 格式)'
+                      : '选填：透明反代地址。若直连官方请留空')
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            name="key"
+            label="API Key / Token"
+            rules={[{ required: isKeyRequired, message: '请填写 API Key' }]}
+          >
+            <Input.Password
+              placeholder={isKeyRequired ? "填入 API Key" : "本地算力可留空"}
+            />
+          </Form.Item>
+
+          <Form.Item name="description" label="备注">
+            <Input placeholder="例如：家里的 5090 / 便宜的中转站" />
+          </Form.Item>
+
+          {/* ... 下面的 is_active 和 quota_total 保持你原来的写法即可 ... */}
+          <Form.Item name="is_active" label="启用状态" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+
+          <Form.Item name="quota_total" label="总配额">
+            <InputNumber style={{ width: '100%' }} min={0} />
+          </Form.Item>
         </Form>
       </Modal>
 
