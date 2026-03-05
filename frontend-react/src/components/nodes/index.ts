@@ -5,4 +5,5 @@ import './GenerateNode';
 import './DisplayNode';
 import './ComfyUIEngineNode';
 
+
 export const nodeTypes = nodeRegistry.getNodeTypes();
