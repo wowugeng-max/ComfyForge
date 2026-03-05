@@ -33,7 +33,11 @@ import { keyApi } from '../../api/keys';
 import { modelApi } from '../../api/models'; // 新增导入
 import type { APIKey } from '../../types/key';
 import { providerApi } from '../../api/providers'; // 🌟 1. 引入接口
+import { ModelParamEditor } from '../../components/admin/ModelParamEditor';
 
+
+// 🌟 2. 定义功能开关 (设为 true 所有人可见，设为 false 隐藏)
+const ENABLE_ADVANCED_PARAM_EDIT = true;
 const { Option } = Select;
 const { Text } = Typography;
 
@@ -81,6 +85,42 @@ export default function KeyManager() {
   const [editingModel, setEditingModel] = useState<any | null>(null);
   const [modelForm] = Form.useForm();
   const [testingModel, setTestingModel] = useState<number | null>(null);
+
+  // 🌟 新增：批量配置弹窗的状态
+  const [bulkModalVisible, setBulkModalVisible] = useState(false);
+  const [bulkCapability, setBulkCapability] = useState('image');
+  const [bulkJsonStr, setBulkJsonStr] = useState('[\n  \n]');
+  const [bulkSaving, setBulkSaving] = useState(false);
+
+
+  // 🌟 批量保存逻辑
+  const handleBulkSave = async () => {
+    try {
+      const parsedArray = JSON.parse(bulkJsonStr);
+      if (!Array.isArray(parsedArray)) {
+        return message.error('JSON 格式错误：批量下发的参数必须是一个数组 []');
+      }
+
+      setBulkSaving(true);
+      const res = await modelApi.bulkUpdateUiParams({
+        api_key_id: currentKeyForModels!.id,
+        capability: bulkCapability,
+        ui_params_array: parsedArray
+      });
+
+      message.success(res.data.message);
+      setBulkModalVisible(false);
+      fetchModels(currentKeyForModels!.id); // 刷新列表看结果
+    } catch (e: any) {
+      if (e instanceof SyntaxError) {
+        message.error('JSON 解析失败，请检查语法');
+      } else {
+        message.error('批量更新失败');
+      }
+    } finally {
+      setBulkSaving(false);
+    }
+  };
 
 
   // 🌟 新增：处理单点测试
@@ -329,7 +369,7 @@ export default function KeyManager() {
     },
   ];
 
-  const modelColumns = [
+const modelColumns = [
     { title: '展示名称', dataIndex: 'display_name', key: 'display_name' },
     { title: '模型代号 (Name)', dataIndex: 'model_name', key: 'model_name' },
     {
@@ -343,7 +383,6 @@ export default function KeyManager() {
         </Space>
       ),
     },
-    // 🌟 新增：健康状态列
     {
       title: '健康状态', key: 'health_status',
       render: (_: any, record: any) => {
@@ -365,21 +404,32 @@ export default function KeyManager() {
     {
       title: '来源', key: 'source',
       render: (_: any, record: any) => (
-        record.is_manual ? <Tag color="orange">手动添加</Tag> : <Tag color="green">官方同步</Tag>
+        record.is_manual ? <Tag color="orange">手动</Tag> : <Tag color="green">同步</Tag>
       ),
     },
     {
       title: '操作', key: 'action',
       render: (_: any, record: any) => (
         <Space size="middle">
-          {/* 🌟 新增：一键测试按钮 */}
+          {/* 单点测试按钮 */}
           <a onClick={() => handleTestModel(record)}>
             {testingModel === record.id ? <Spin size="small" /> : '单点测试'}
           </a>
 
+          {/* 🌟 核心挂载点：功能开关判断，如果开启则渲染参数配置组件 */}
+          {ENABLE_ADVANCED_PARAM_EDIT && (
+             <ModelParamEditor
+               modelId={record.id}
+               modelName={record.model_name}
+               initialParams={record.context_ui_params}
+               onSuccess={() => fetchModels(currentKeyForModels!.id)} // 保存成功后刷新模型列表
+             />
+          )}
+
+          {/* 如果是手动模型，允许编辑基础信息和删除 */}
           {record.is_manual ? (
             <>
-              <a onClick={() => openModelModal(record)}>编辑</a>
+              <a onClick={() => openModelModal(record)}>编辑基础</a>
               <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
                 <a style={{ color: 'red' }}>删除</a>
               </Popconfirm>
@@ -387,32 +437,8 @@ export default function KeyManager() {
           ) : null}
         </Space>
       ),
-    },
-    {
-      title: '来源', key: 'source',
-      render: (_: any, record: any) => (
-        record.is_manual ? <Tag color="orange">手动添加</Tag> : <Tag color="green">官方同步</Tag>
-      ),
-    },
-    {
-      title: '操作', key: 'action',
-      render: (_: any, record: any) => (
-        <Space size="middle">
-          {record.is_manual ? (
-            <>
-              <a onClick={() => openModelModal(record)}>编辑</a>
-              <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
-                <a style={{ color: 'red' }}>删除</a>
-              </Popconfirm>
-            </>
-          ) : (
-            <Text type="secondary" style={{ fontSize: 12 }}>由同步接管</Text>
-          )}
-        </Space>
-      ),
-    },
+    }
   ];
-
   return (
     <div style={{ padding: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -495,15 +521,64 @@ export default function KeyManager() {
       </Modal>
 
       {/* ================= 模型管理抽屉 ================= */}
-      <Drawer
+<Drawer
         title={`${currentKeyForModels?.provider || ''} - 模型库管理`}
-        width={800}
+        width={850}
         onClose={() => setDrawerVisible(false)}
         open={drawerVisible}
-        extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openModelModal()}>手动添加模型</Button>}
+        extra={
+          <Space>
+            {/* 🌟 批量配置核武器按钮 */}
+            {ENABLE_ADVANCED_PARAM_EDIT && (
+              <Button
+                type="dashed"
+                icon={<SettingOutlined />}
+                onClick={() => setBulkModalVisible(true)}
+              >
+                批量参数配置
+              </Button>
+            )}
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openModelModal()}>手动添加模型</Button>
+          </Space>
+        }
       >
         <Table columns={modelColumns} dataSource={models} rowKey="id" loading={modelsLoading} pagination={false} size="small" />
       </Drawer>
+
+      {/* 🌟 批量配置弹窗 */}
+      <Modal
+        title={`🚀 批量配置参数 (${currentKeyForModels?.provider || ''})`}
+        open={bulkModalVisible}
+        onOk={handleBulkSave}
+        confirmLoading={bulkSaving}
+        onCancel={() => setBulkModalVisible(false)}
+        width={650}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            1. 选择要批量覆盖的能力大类：
+          </Text>
+          <Radio.Group value={bulkCapability} onChange={e => setBulkCapability(e.target.value)} buttonStyle="solid">
+            <Radio.Button value="chat">文本 (Chat)</Radio.Button>
+            <Radio.Button value="vision">识图 (Vision)</Radio.Button>
+            <Radio.Button value="image">绘图 (Image)</Radio.Button>
+            <Radio.Button value="video">视频 (Video)</Radio.Button>
+          </Radio.Group>
+        </div>
+
+        <div>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            2. 粘贴该大类的 JSON 参数数组 (注意：这里只需传入数组 <b>[ ... ]</b>)：
+          </Text>
+          <Input.TextArea
+            rows={15}
+            value={bulkJsonStr}
+            onChange={(e) => setBulkJsonStr(e.target.value)}
+            style={{ fontFamily: 'monospace', backgroundColor: '#fafafa' }}
+            placeholder={`[\n  {\n    "name": "size",\n    "label": "画面比例",\n    "type": "select",\n    "options": [...]\n  }\n]`}
+          />
+        </div>
+      </Modal>
 
       {/* ================= 手动添加/编辑模型的表单 Modal ================= */}
       <Modal title={editingModel ? '编辑手动模型' : '手动添加模型'} open={modelModalVisible} onOk={handleModelModalOk} onCancel={() => setModelModalVisible(false)} destroyOnHidden>

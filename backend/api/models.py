@@ -27,6 +27,16 @@ class ModelCreateUpdate(BaseModel):
     context_ui_params: Optional[Dict[str, Any]] = {}
     is_active: Optional[bool] = True
 
+# 定义接收 JSON 的 Pydantic 模型
+class UIParamsUpdate(BaseModel):
+    context_ui_params: Dict[str, Any]
+
+# ================= 批量更新 UI 参数接口 =================
+class BulkUIParamsUpdate(BaseModel):
+    api_key_id: int
+    capability: str           # 能力大类：'chat', 'vision', 'image', 'video'
+    ui_params_array: list     # 传入针对该能力的参数数组
+
 
 # ================= 1. 查询与同步路由 (原有) =================
 
@@ -105,7 +115,7 @@ def create_model(model_data: ModelCreateUpdate, db: Session = Depends(get_db)):
     return {"status": "success", "message": "模型添加成功", "id": new_model.id}
 
 
-@router.put("/{model_id}")
+@router.put("/{model_id:int}")
 def update_model(model_id: int, model_data: ModelCreateUpdate, db: Session = Depends(get_db)):
     """更新手动添加的模型信息"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
@@ -121,7 +131,7 @@ def update_model(model_id: int, model_data: ModelCreateUpdate, db: Session = Dep
     return {"status": "success", "message": "模型更新成功"}
 
 
-@router.delete("/{model_id}")
+@router.delete("/{model_id:int}")
 def delete_model(model_id: int, db: Session = Depends(get_db)):
     """删除模型（增加安全校验，防止误删官方同步模型）"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
@@ -137,7 +147,7 @@ def delete_model(model_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": "模型已删除"}
 
 
-@router.post("/{model_id}/test")
+@router.post("/{model_id:int}/test")
 async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     """对单个模型进行连通性探针测试，并更新其健康档案"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
@@ -196,3 +206,45 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         "message": status_msg,
         "last_tested_at": db_model.last_tested_at
     }
+
+
+@router.put("/{model_id:int}/ui-params")
+def update_model_ui_params(model_id: int, payload: UIParamsUpdate, db: Session = Depends(get_db)):
+    """热更新模型的 UI 参数配置 (供高级配置模块使用)"""
+    db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    if not db_model:
+        raise HTTPException(status_code=404, detail="未找到该模型")
+
+    # 直接覆写 JSON 字段
+    db_model.context_ui_params = payload.context_ui_params
+    db.commit()
+
+    return {"status": "success", "message": "参数配置热更新成功"}
+
+
+@router.put("/bulk/ui-params")
+def bulk_update_ui_params(payload: BulkUIParamsUpdate, db: Session = Depends(get_db)):
+    """按能力大类 (如 image/video) 批量覆写该 Key 下所有匹配模型的参数"""
+    # 查找该 Key 下的所有模型
+    models = db.query(ModelConfig).filter(ModelConfig.api_key_id == payload.api_key_id).all()
+    updated_count = 0
+
+    # 引入 flag_modified 强制 SQLAlchemy 识别 JSON 字典内部的更新
+    from sqlalchemy.orm.attributes import flag_modified
+
+    for m in models:
+        # 只有当该模型具备这项能力时，才给它注入这套参数
+        if m.capabilities and m.capabilities.get(payload.capability):
+            # 深拷贝原有配置，防止丢失其他能力的参数（比如一个模型同时有 chat 和 image）
+            current_params = dict(m.context_ui_params) if m.context_ui_params else {}
+
+            # 覆写该能力大类的参数数组
+            current_params[payload.capability] = payload.ui_params_array
+
+            m.context_ui_params = current_params
+            flag_modified(m, "context_ui_params")  # 标记 JSON 字段已修改
+            updated_count += 1
+
+    db.commit()
+
+    return {"status": "success", "message": f"成功批量覆写了 {updated_count} 个模型的 {payload.capability} 参数！"}

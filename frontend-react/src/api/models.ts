@@ -18,4 +18,8 @@ export const modelApi = {
 
   // 🌟 新增：单点连通性测试
   test: (id: number) => apiClient.post(`/models/${id}/test`),
+
+  // 🌟 新增：大类批量更新接口
+  bulkUpdateUiParams: (payload: { api_key_id: number; capability: string; ui_params_array: any[] }) =>
+    apiClient.put('/models/bulk/ui-params', payload),
 };
