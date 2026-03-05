@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, message, Card } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/client';
+// 🌟 1. 引入项目 API
+import { projectApi } from '../../api/projects';
 
 const { Option } = Select;
 
@@ -16,25 +18,27 @@ const assetTypes = [
 export default function AssetCreate() {
   const [form] = Form.useForm();
   const [assetType, setAssetType] = useState<string>('prompt');
+
+  // 🌟 2. 新增状态：保存项目列表
+  const [projects, setProjects] = useState<any[]>([]);
   const navigate = useNavigate();
+
+  // 🌟 3. 在组件挂载时拉取所有项目
+  useEffect(() => {
+    projectApi.getAll().then(res => {
+      setProjects(res.data);
+    }).catch(() => {
+      message.error('无法加载项目列表');
+    });
+  }, []);
 
   const onFinish = async (values: any) => {
     try {
-      // 根据类型构建 data 字段
       let data = {};
       if (assetType === 'prompt') {
-        data = {
-          content: values.content,
-          negative: values.negative,
-        };
+        data = { content: values.content, negative: values.negative };
       } else if (assetType === 'image') {
-        // 图像需要 file_path 等信息，这里简化处理
-        data = {
-          file_path: values.file_path,
-          width: values.width,
-          height: values.height,
-          format: values.format,
-        };
+        data = { file_path: values.file_path, width: values.width, height: values.height, format: values.format };
       } else if (assetType === 'character') {
         data = {
           core_prompt_asset_id: values.core_prompt_asset_id,
@@ -48,14 +52,7 @@ export default function AssetCreate() {
           parameters: values.parameters ? JSON.parse(values.parameters) : {},
         };
       } else if (assetType === 'video') {
-        data = {
-          file_path: values.file_path,
-          width: values.width,
-          height: values.height,
-          duration: values.duration,
-          fps: values.fps,
-          format: values.format,
-        };
+        data = { file_path: values.file_path, width: values.width, height: values.height, duration: values.duration, fps: values.fps, format: values.format };
       }
 
       const payload = {
@@ -65,7 +62,8 @@ export default function AssetCreate() {
         tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [],
         data,
         thumbnail: values.thumbnail,
-        project_id: values.project_id,
+        // 🌟 4. 如果没选项目，传 null 就是全局资产
+        project_id: values.project_id || null,
       };
 
       await apiClient.post('/assets/', payload);
@@ -73,11 +71,11 @@ export default function AssetCreate() {
       navigate('/assets');
     } catch (error) {
       message.error('创建失败');
-      console.error(error);
     }
   };
 
   const renderFieldsByType = () => {
+    // ... 这里的 switch 代码保持完全不变 ...
     switch (assetType) {
       case 'prompt':
         return (
@@ -165,17 +163,10 @@ export default function AssetCreate() {
 
   return (
     <Card title="新建资产">
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={onFinish}
-        initialValues={{ type: 'prompt' }}
-      >
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ type: 'prompt' }}>
         <Form.Item name="type" label="资产类型" rules={[{ required: true }]}>
           <Select onChange={(value) => setAssetType(value)}>
-            {assetTypes.map(t => (
-              <Option key={t.value} value={t.value}>{t.label}</Option>
-            ))}
+            {assetTypes.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
           </Select>
         </Form.Item>
 
@@ -183,31 +174,33 @@ export default function AssetCreate() {
           <Input />
         </Form.Item>
 
-        <Form.Item name="description" label="描述">
-          <Input.TextArea />
+        {/* 🌟 5. 将生硬的 Input 替换为优雅的 Select 下拉框 */}
+        <Form.Item
+          name="project_id"
+          label="归属项目 (留空则为全局资产)"
+          tooltip="选择此项后，该资产将只会出现在该项目的画布资产库中。"
+        >
+          <Select
+            placeholder="🌍 设为全局公共资产"
+            allowClear
+            showSearch
+            optionFilterProp="children"
+          >
+            {projects.map(p => (
+              <Option key={p.id} value={p.id}>📦 {p.name}</Option>
+            ))}
+          </Select>
         </Form.Item>
 
-        <Form.Item name="tags" label="标签（逗号分隔）">
-          <Input placeholder="如 风景, 科幻" />
-        </Form.Item>
-
-        <Form.Item name="thumbnail" label="缩略图路径">
-          <Input />
-        </Form.Item>
-
-        <Form.Item name="project_id" label="项目ID">
-          <Input type="number" />
-        </Form.Item>
+        <Form.Item name="description" label="描述"><Input.TextArea /></Form.Item>
+        <Form.Item name="tags" label="标签（逗号分隔）"><Input placeholder="如 风景, 科幻" /></Form.Item>
+        <Form.Item name="thumbnail" label="缩略图路径"><Input /></Form.Item>
 
         {renderFieldsByType()}
 
         <Form.Item>
-          <Button type="primary" htmlType="submit">
-            创建
-          </Button>
-          <Button style={{ marginLeft: 8 }} onClick={() => navigate('/assets')}>
-            取消
-          </Button>
+          <Button type="primary" htmlType="submit">创建</Button>
+          <Button style={{ marginLeft: 8 }} onClick={() => navigate('/assets')}>取消</Button>
         </Form.Item>
       </Form>
     </Card>

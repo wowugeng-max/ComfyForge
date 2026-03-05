@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 // 🌟 核心修复 1：从 antd 导入中彻底删除了废弃的 List
-import { Input, Select, Spin, Tag, Typography, Badge, Empty, Tooltip } from 'antd';
+import {Input, Select, Spin, Tag, Typography, Badge, Empty, Tooltip, Segmented} from 'antd';
 import { useAssetLibraryStore, type Asset } from '../stores/assetLibraryStore';
 import { useDrag } from 'react-dnd';
 import { DndItemTypes } from '../constants/dnd';
@@ -13,6 +13,7 @@ import {
   ApiOutlined
 } from '@ant-design/icons';
 
+
 const { Option } = Select;
 const { Search } = Input;
 const { Text } = Typography;
@@ -23,13 +24,13 @@ interface AssetLibraryProps {
 }
 
 const AssetLibrary: React.FC<AssetLibraryProps> = ({ projectId }) => {
-  const { assets, loading, filterType, searchText, fetchAssets, setFilterType, setSearchText } = useAssetLibraryStore();
+  const { assets, loading, filterType, searchText, scope, setScope,fetchAssets, setFilterType, setSearchText } = useAssetLibraryStore();
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   useEffect(() => {
     // 🌟 每次加载或切换项目时，根据 projectId 获取专属资产
     fetchAssets(projectId);
-  }, [fetchAssets, projectId]);
+  }, [fetchAssets, projectId, scope]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -64,6 +65,18 @@ const AssetLibrary: React.FC<AssetLibraryProps> = ({ projectId }) => {
         <Typography.Title level={5} style={{ marginBottom: 12 }}>
           资产库 <Badge count={filteredAssets.length} overflowCount={999} style={{ backgroundColor: '#52c41a', marginLeft: 8 }} />
         </Typography.Title>
+
+        {/* 🌟 3. 核心：双轨作用域切换器 */}
+        <Segmented
+          block
+          options={[
+            { label: '📦 项目专属', value: 'project' },
+            { label: '🌍 全局公共', value: 'global' }
+          ]}
+          value={scope}
+          onChange={(val) => setScope(val as 'project' | 'global')}
+          style={{ marginBottom: 12 }}
+        />
 
         <Search
           placeholder="搜索名称或内容..."

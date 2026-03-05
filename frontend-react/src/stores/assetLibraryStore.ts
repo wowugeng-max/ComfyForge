@@ -7,7 +7,7 @@ export interface Asset {
   name: string;
   thumbnail?: string;
   data: any;
-  project_id?: number; // 🌟 必须加上
+  project_id?: number;
 }
 
 interface AssetLibraryState {
@@ -15,7 +15,9 @@ interface AssetLibraryState {
   loading: boolean;
   filterType: string;
   searchText: string;
-  fetchAssets: (projectId?: number) => Promise<void>; // 🌟 接收 projectId
+  scope: 'project' | 'global'; // 🌟 1. 新增作用域状态
+  setScope: (scope: 'project' | 'global') => void;
+  fetchAssets: (projectId?: number) => Promise<void>;
   setFilterType: (type: string) => void;
   setSearchText: (text: string) => void;
 }
@@ -25,11 +27,20 @@ export const useAssetLibraryStore = create<AssetLibraryState>((set, get) => ({
   loading: false,
   filterType: '',
   searchText: '',
+  scope: 'project', // 默认看项目的
+  setScope: (scope) => set({ scope }), // 切换作用域方法
   fetchAssets: async (projectId?: number) => {
     set({ loading: true });
     try {
-      // 🌟 根据 projectId 动态请求
-      const url = projectId ? `/assets/?project_id=${projectId}` : '/assets/';
+      const { scope } = get();
+      // 🌟 2. 根据作用域动态构建 URL
+      let url = '/assets/';
+      if (scope === 'global') {
+        url = '/assets/?is_global=true';
+      } else if (projectId) {
+        url = `/assets/?project_id=${projectId}`;
+      }
+
       const res = await apiClient.get(url);
       const assets = res.data.filter((a: any) => ['image', 'prompt', 'video','workflow'].includes(a.type));
       set({ assets });

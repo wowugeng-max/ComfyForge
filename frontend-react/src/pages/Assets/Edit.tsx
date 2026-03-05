@@ -1,8 +1,9 @@
-// src/pages/Assets/Edit.tsx
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Button, message, Card, Spin } from 'antd';
 import { useNavigate, useParams } from 'react-router-dom';
 import apiClient from '../../api/client';
+// 🌟 1. 引入 API
+import { projectApi } from '../../api/projects';
 
 const { Option } = Select;
 
@@ -20,17 +21,25 @@ export default function AssetEdit() {
   const [assetType, setAssetType] = useState<string>('prompt');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  // 🌟 2. 保存项目列表
+  const [projects, setProjects] = useState<any[]>([]);
   const navigate = useNavigate();
 
-  // 加载资产数据
+  // 🌟 3. 同时拉取资产详情和项目列表
   useEffect(() => {
-    const fetchAsset = async () => {
+    const fetchData = async () => {
       try {
-        const res = await apiClient.get(`/assets/${id}`);
-        const asset = res.data;
+        const [assetRes, projectsRes] = await Promise.all([
+          apiClient.get(`/assets/${id}`),
+          projectApi.getAll()
+        ]);
+
+        setProjects(projectsRes.data);
+
+        const asset = assetRes.data;
         setAssetType(asset.type);
 
-        // 将资产数据转换为表单字段格式
         const formValues: any = {
           name: asset.name,
           description: asset.description || '',
@@ -40,7 +49,6 @@ export default function AssetEdit() {
           type: asset.type,
         };
 
-        // 根据类型将 data 中的字段展开
         const data = asset.data || {};
         if (asset.type === 'prompt') {
           formValues.content = data.content || '';
@@ -69,32 +77,23 @@ export default function AssetEdit() {
 
         form.setFieldsValue(formValues);
       } catch (error) {
-        message.error('加载资产失败');
+        message.error('加载数据失败');
         navigate('/assets');
       } finally {
         setLoading(false);
       }
     };
-    fetchAsset();
+    fetchData();
   }, [id, form, navigate]);
 
   const onFinish = async (values: any) => {
     setSubmitting(true);
     try {
-      // 根据类型构建 data 字段
       let data = {};
       if (assetType === 'prompt') {
-        data = {
-          content: values.content,
-          negative: values.negative,
-        };
+        data = { content: values.content, negative: values.negative };
       } else if (assetType === 'image') {
-        data = {
-          file_path: values.file_path,
-          width: Number(values.width),
-          height: Number(values.height),
-          format: values.format,
-        };
+        data = { file_path: values.file_path, width: Number(values.width), height: Number(values.height), format: values.format };
       } else if (assetType === 'character') {
         data = {
           core_prompt_asset_id: Number(values.core_prompt_asset_id),
@@ -108,14 +107,7 @@ export default function AssetEdit() {
           parameters: values.parameters ? JSON.parse(values.parameters) : {},
         };
       } else if (assetType === 'video') {
-        data = {
-          file_path: values.file_path,
-          width: Number(values.width),
-          height: Number(values.height),
-          duration: Number(values.duration),
-          fps: Number(values.fps),
-          format: values.format,
-        };
+        data = { file_path: values.file_path, width: Number(values.width), height: Number(values.height), duration: Number(values.duration), fps: Number(values.fps), format: values.format };
       }
 
       const payload = {
@@ -125,7 +117,8 @@ export default function AssetEdit() {
         tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [],
         data,
         thumbnail: values.thumbnail,
-        project_id: values.project_id ? Number(values.project_id) : null,
+        // 🌟 4. 如果清空了选择，则恢复为 null (全局)
+        project_id: values.project_id || null,
       };
 
       await apiClient.put(`/assets/${id}`, payload);
@@ -133,13 +126,13 @@ export default function AssetEdit() {
       navigate(`/assets/${id}`);
     } catch (error) {
       message.error('更新失败');
-      console.error(error);
     } finally {
       setSubmitting(false);
     }
   };
 
   const renderFieldsByType = () => {
+    // ... Switch 代码完全保持不变 ...
     switch (assetType) {
       case 'prompt':
         return (
@@ -225,59 +218,45 @@ export default function AssetEdit() {
     }
   };
 
-  if (loading) {
-    return (
-      <Card>
-        <Spin tip="加载中..." />
-      </Card>
-    );
-  }
+  if (loading) return <Card><Spin tip="加载中..." /></Card>;
 
   return (
     <Card title="编辑资产">
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={onFinish}
-        initialValues={{ type: assetType }}
-      >
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ type: assetType }}>
         <Form.Item name="type" label="资产类型" rules={[{ required: true }]}>
           <Select disabled>
-            {assetTypes.map(t => (
-              <Option key={t.value} value={t.value}>{t.label}</Option>
+            {assetTypes.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
+          </Select>
+        </Form.Item>
+
+        <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+
+        {/* 🌟 5. 替换项目输入框 */}
+        <Form.Item
+          name="project_id"
+          label="归属项目 (留空则为全局资产)"
+        >
+          <Select
+            placeholder="🌍 设为全局公共资产"
+            allowClear
+            showSearch
+            optionFilterProp="children"
+          >
+            {projects.map(p => (
+              <Option key={p.id} value={p.id}>📦 {p.name}</Option>
             ))}
           </Select>
         </Form.Item>
 
-        <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-          <Input />
-        </Form.Item>
-
-        <Form.Item name="description" label="描述">
-          <Input.TextArea />
-        </Form.Item>
-
-        <Form.Item name="tags" label="标签（逗号分隔）">
-          <Input placeholder="如 风景, 科幻" />
-        </Form.Item>
-
-        <Form.Item name="thumbnail" label="缩略图路径">
-          <Input />
-        </Form.Item>
-
-        <Form.Item name="project_id" label="项目ID">
-          <Input type="number" />
-        </Form.Item>
+        <Form.Item name="description" label="描述"><Input.TextArea /></Form.Item>
+        <Form.Item name="tags" label="标签（逗号分隔）"><Input placeholder="如 风景, 科幻" /></Form.Item>
+        <Form.Item name="thumbnail" label="缩略图路径"><Input /></Form.Item>
 
         {renderFieldsByType()}
 
         <Form.Item>
-          <Button type="primary" htmlType="submit" loading={submitting}>
-            保存
-          </Button>
-          <Button style={{ marginLeft: 8 }} onClick={() => navigate(`/assets/${id}`)}>
-            取消
-          </Button>
+          <Button type="primary" htmlType="submit" loading={submitting}>保存</Button>
+          <Button style={{ marginLeft: 8 }} onClick={() => navigate(`/assets/${id}`)}>取消</Button>
         </Form.Item>
       </Form>
     </Card>

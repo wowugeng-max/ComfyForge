@@ -79,19 +79,28 @@ def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
     return db_asset
 
 
+
 @router.get("/", response_model=List[AssetOut])
 def list_assets(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    type: Optional[str] = None,
-    project_id: Optional[int] = None,  # 新增
-    db: Session = Depends(get_db)
+        skip: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=1000),
+        type: Optional[str] = None,
+        project_id: Optional[int] = None,
+        is_global: Optional[bool] = None,  # 🌟 1. 增加一个专门过滤全局资产的参数
+        db: Session = Depends(get_db)
 ):
     query = db.query(Asset)
     if type:
         query = query.filter(Asset.type == type)
-    if project_id is not None:
+
+    # 🌟 2. 核心隔离逻辑
+    if is_global:
+        # 只查询没有绑定项目的“纯公共资产”
+        query = query.filter(Asset.project_id.is_(None))
+    elif project_id is not None:
+        # 只查询绑定了当前项目的资产
         query = query.filter(Asset.project_id == project_id)
+
     assets = query.offset(skip).limit(limit).all()
     return assets
 
