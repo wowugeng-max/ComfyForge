@@ -1,45 +1,64 @@
 import { Layout as AntLayout, Menu } from 'antd';
-import { Outlet, Link } from 'react-router-dom';
+import { Outlet, Link, useLocation } from 'react-router-dom';
 import {
-  DashboardOutlined,
+  HomeOutlined,
   FileImageOutlined,
-  VideoCameraOutlined,
   KeyOutlined,
   ApiOutlined,
-  AppstoreOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
-import { SettingOutlined } from '@ant-design/icons';
 
-const { Header, Content, Sider } = AntLayout;
+const { Content, Sider } = AntLayout;
 
 export default function Layout() {
+  const location = useLocation();
+
+  // 🌟 智能判断当前高亮的菜单项
+  const getSelectedKey = () => {
+    const path = location.pathname;
+    if (path === '/') return 'dashboard';
+    if (path.startsWith('/assets')) return 'assets';
+    if (path.startsWith('/keys')) return 'keys';
+    if (path.startsWith('/rules')) return 'rules';
+    if (path.startsWith('/pipeline')) return 'pipeline';
+    return 'dashboard';
+  };
+
   return (
     <AntLayout style={{ minHeight: '100vh' }}>
-      <Sider>
-        <div style={{ height: 32, margin: 16, color: '#fff', fontSize: 18, textAlign: 'center' }}>
+      {/* 🌟 侧边栏改为现代化的极简白色风格 */}
+      <Sider theme="light" width={240} style={{ borderRight: '1px solid #f0f0f0' }}>
+        <div style={{
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: 24,
+          fontSize: 20,
+          fontWeight: 900,
+          color: '#1890ff',
+          letterSpacing: 1
+        }}>
           ComfyForge
         </div>
         <Menu
-        theme="dark"
-        mode="inline"
-        defaultSelectedKeys={['dashboard']}
-  items={[
-    { key: 'dashboard', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
-    { key: 'assets', icon: <FileImageOutlined />, label: <Link to="/assets">资产管理</Link> },
-    { key: 'canvas', icon: <AppstoreOutlined />, label: <Link to="/canvas">无限画布</Link> },
-    { key: 'video', icon: <VideoCameraOutlined />, label: <Link to="/video-workshop">视频工坊</Link> },
-    { key: 'keys', icon: <KeyOutlined />, label: <Link to="/keys">Key管理</Link> },
-    { key: 'pipeline', icon: <ApiOutlined />, label: <Link to="/pipeline">图像生成管道</Link> },
-    { key: 'rules', icon: <SettingOutlined />, label: <Link to="/rules">推荐规则</Link> },
-  ]}
-/>
+          mode="inline"
+          selectedKeys={[getSelectedKey()]}
+          style={{ borderRight: 0, padding: '0 8px' }}
+          items={[
+            { key: 'dashboard', icon: <HomeOutlined />, label: <Link to="/">我的项目</Link> },
+            { key: 'assets', icon: <FileImageOutlined />, label: <Link to="/assets">全局资产库</Link> },
+            { type: 'divider' }, // 优雅的分割线
+            { key: 'keys', icon: <KeyOutlined />, label: <Link to="/keys">算力与模型 (Keys)</Link> },
+            { key: 'pipeline', icon: <ApiOutlined />, label: <Link to="/pipeline">图像生成管道</Link> },
+            { key: 'rules', icon: <SettingOutlined />, label: <Link to="/rules">系统推荐规则</Link> },
+          ]}
+        />
       </Sider>
-      <AntLayout>
-        <Header style={{ background: '#fff', padding: 0, paddingLeft: 16 }}>
-          <h2>ComfyForge 智能创作助理</h2>
-        </Header>
-        <Content style={{ margin: 24 }}>
-          <Outlet /> {/* 这里会渲染当前路由对应的子页面 */}
+
+      {/* 🌟 主体内容区，去掉了多余的 Header，让子页面的标题直接顶天立地 */}
+      <AntLayout style={{ background: '#f5f7fa' }}>
+        <Content style={{ margin: 0, overflow: 'auto' }}>
+          <Outlet /> {/* 这里渲染 Dashboard 等中枢页面 */}
         </Content>
       </AntLayout>
     </AntLayout>

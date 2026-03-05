@@ -7,6 +7,7 @@ export interface Asset {
   name: string;
   thumbnail?: string;
   data: any;
+  project_id?: number; // 🌟 新增字段
 }
 
 interface AssetLibraryState {
@@ -14,7 +15,7 @@ interface AssetLibraryState {
   loading: boolean;
   filterType: string;
   searchText: string;
-  fetchAssets: () => Promise<void>;
+  fetchAssets: (projectId?: number) => Promise<void>; // 🌟 接收 projectId
   setFilterType: (type: string) => void;
   setSearchText: (text: string) => void;
 }
@@ -24,11 +25,12 @@ export const useAssetLibraryStore = create<AssetLibraryState>((set, get) => ({
   loading: false,
   filterType: '',
   searchText: '',
-  fetchAssets: async () => {
+  fetchAssets: async (projectId?: number) => {
     set({ loading: true });
     try {
-      const res = await apiClient.get('/assets/');
-      // 过滤出需要的类型
+      // 🌟 核心逻辑：带了 projectId 就查项目专属资产，不带就查全局资产
+      const url = projectId ? `/assets/?project_id=${projectId}` : '/assets/';
+      const res = await apiClient.get(url);
       const assets = res.data.filter((a: any) => ['image', 'prompt', 'video','workflow'].includes(a.type));
       set({ assets });
     } catch (error) {

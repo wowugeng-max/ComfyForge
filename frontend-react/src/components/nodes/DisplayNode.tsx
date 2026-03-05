@@ -6,6 +6,7 @@ import { Typography, Image, Empty, Button, Modal, Input, message, Tooltip } from
 import { DesktopOutlined, SaveOutlined, TagsOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore';
+import { useParams } from 'react-router-dom';
 
 const { Text, Paragraph } = Typography;
 
@@ -14,6 +15,9 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
 
   // 引入资产库的 Store，用于保存后自动刷新左侧列表
   const { fetchAssets } = useAssetLibraryStore();
+
+  // 🌟 从 URL 中偷取当前的项目 ID
+  const { id: projectId } = useParams<{ id: string }>();
 
   // 🌟 修正数据源：优先读取 GenerateNode 顺着连线推过来的 incoming_data
   const displayData = data.incoming_data || data.result;
@@ -102,7 +106,9 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
         tags: assetTags ? assetTags.split(/[,，]/).map(t => t.trim()).filter(Boolean) : [],
         data: {
           content: displayData.content
-        }
+        },
+        // 🌟 致命一击：将资产永久羁绊到当前项目！
+        project_id: projectId ? Number(projectId) : null
       };
 
       await apiClient.post('/assets/', payload);
@@ -113,8 +119,8 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
       setAssetName('');
       setAssetTags('');
 
-      // 🌟 自动刷新左侧资产列表！
-      fetchAssets();
+     // 🌟 刷新资产库时，带上当前的项目 ID
+      fetchAssets(projectId ? Number(projectId) : undefined);
 
     } catch (error: any) {
       message.error(`保存失败: ${error.response?.data?.detail || '未知错误'}`);

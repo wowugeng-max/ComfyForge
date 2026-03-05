@@ -6,7 +6,11 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ..db import get_db  # 统一导入
-from ..models import Asset, Project
+from ..models import Asset, Project# 🌟 补充导入 Dict, Any
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
+from datetime import datetime
+
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -14,6 +18,7 @@ class ProjectBase(BaseModel):
     name: str
     description: Optional[str] = ""
     tags: List[str] = []
+    canvas_data: Optional[Dict[str, Any]] = {}
 
 class ProjectCreate(ProjectBase):
     pass
@@ -22,6 +27,7 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+    canvas_data: Optional[Dict[str, Any]] = None
 
 class ProjectOut(ProjectBase):
     id: int

@@ -17,13 +17,19 @@ const { Option } = Select;
 const { Search } = Input;
 const { Text } = Typography;
 
-const AssetLibrary: React.FC = () => {
+// 🌟 增加 Props 接口
+interface AssetLibraryProps {
+  projectId?: number;
+}
+
+const AssetLibrary: React.FC<AssetLibraryProps> = ({ projectId }) => {
   const { assets, loading, filterType, searchText, fetchAssets, setFilterType, setSearchText } = useAssetLibraryStore();
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAssets();
-  }, [fetchAssets]);
+    // 🌟 每次加载或切换项目时，根据 projectId 获取专属资产
+    fetchAssets(projectId);
+  }, [fetchAssets, projectId]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
