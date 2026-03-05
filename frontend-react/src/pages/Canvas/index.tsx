@@ -50,8 +50,8 @@ const CanvasWorkspace = () => {
   const [menuConfig, setMenuConfig] = useState<{ x: number, y: number, flowX: number, flowY: number } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // 防抖计时器引用
-  const clickTimer = useRef<NodeJS.Timeout | null>(null);
+// 🌟 核心魔法：使用一个 Ref 来记录单击倒计时
+  const clickTimeout = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -70,32 +70,65 @@ const CanvasWorkspace = () => {
 
   const onConnect = useCallback((params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
 
-  // 🌟 核心魔法：处理单击关闭（带防抖）
+ // 1. 纯净的关闭菜单函数（给单击节点等其他操作使用）
   const closeMenu = useCallback(() => {
-    // 延迟 200ms 关闭，给双击事件留出判定时间
-    clickTimer.current = setTimeout(() => {
-      setMenuConfig(null);
-      setSearchTerm('');
-    }, 200);
+    setMenuConfig(null);
+    setSearchTerm('');
   }, []);
 
-  // 🌟 核心魔法：极其丝滑的双击拦截
-  const onPaneDoubleClick = useCallback((event: React.MouseEvent) => {
+ // 2. 终极接管：把单击和双击合并到同一个函数里自己算！
+  const onPaneClick = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
+
+    if (clickTimeout.current) {
+      // 💥 破局点：如果定时器还在，说明你在 250 毫秒内点了第二次！这就叫双击！
+      clearTimeout(clickTimeout.current);
+      clickTimeout.current = null;
+
+      // --- 下面执行双击逻辑（打开菜单） ---
+      if (!reactFlowInstance) return;
+      const position = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+
+      setMenuConfig({
+        x: event.clientX,
+        y: event.clientY,
+        flowX: position.x,
+        flowY: position.y,
+      });
+      setSearchTerm('');
+    } else {
+      // 这是第一次点击。我们不马上关菜单，而是等 250 毫秒。
+      // 如果 250 毫秒内没点第二次，就老老实实当做单击处理（关闭菜单）。
+      clickTimeout.current = setTimeout(() => {
+        clickTimeout.current = null;
+        closeMenu();
+      }, 250); // 250ms 是最符合人类直觉的双击间隔
+    }
+  }, [reactFlowInstance, closeMenu]);
+
+
+  // 🌟 极其丝滑的右键菜单呼出（不会和左键冲突！）
+  const onPaneContextMenu = useCallback((event: React.MouseEvent) => {
+    // 💥 关键点：这行代码会拦截掉浏览器自带的“刷新/另存为”右键丑菜单
+    event.preventDefault();
+
     if (!reactFlowInstance) return;
 
-    // 清除单击造成的关闭倒计时
-    if (clickTimer.current) clearTimeout(clickTimer.current);
+    // 如果刚好有左键的延迟定时器在跑，顺手清理掉
+    if (clickTimeout.current) {
+      clearTimeout(clickTimeout.current);
+      clickTimeout.current = null;
+    }
 
+    // 复用已有的菜单状态逻辑
     const position = reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-
     setMenuConfig({
       x: event.clientX,
       y: event.clientY,
       flowX: position.x,
       flowY: position.y,
     });
-    setSearchTerm(''); // 每次打开清空搜索
+    setSearchTerm('');
   }, [reactFlowInstance]);
 
   const addNodeFromMenu = (type: string, label: string) => {
@@ -160,13 +193,20 @@ const CanvasWorkspace = () => {
             nodeTypes={nodeTypes}
             fitView
 
-            // 🌟 1. 极其关键：彻底关闭 React Flow 自带的双击放大功能！
-            zoomOnDoubleClick={false}
+            zoomOnDoubleClick={false} // 保持关闭原生双击放大
 
-            // 🌟 2. 绑定我们自己的事件
-            onPaneDoubleClick={onPaneDoubleClick}
-            onPaneClick={closeMenu}
+            // 🌟 终极修复：删除 onPaneDoubleClick！全部交由 onPaneClick 统一接管
+            onPaneClick={onPaneClick}
             onNodeClick={closeMenu}
+
+            // 🌟 新增：绑定空白画布的右键菜单事件
+            onPaneContextMenu={onPaneContextMenu}
+
+            // 🌟 终极修复：同时绑定“退格键”和“Delete键”作为删除触发器
+            deleteKeyCode={['Backspace', 'Delete']}
+
+            // 💡 额外赠送的高级交互：按住 Shift 或 Ctrl 可以框选/多选节点，然后一键 Delete 批量删除
+            selectionKeyCode={['Shift', 'Control', 'Meta']}
           >
             <Background color="#ccc" gap={16} />
             <Controls style={{ left: 16, right: 'auto' }} />
@@ -191,7 +231,7 @@ const CanvasWorkspace = () => {
                   prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
                   placeholder="搜索节点..."
                   variant="borderless"
-                  autoFocus // 🌟 极其关键：双击后直接键盘输入！
+                  ref={(input) => input && setTimeout(() => input.focus(), 50)} // 🌟 极其关键：双击后直接键盘输入！
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   style={{ padding: 0 }}
