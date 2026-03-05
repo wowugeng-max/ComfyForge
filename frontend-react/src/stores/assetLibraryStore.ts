@@ -7,7 +7,7 @@ export interface Asset {
   name: string;
   thumbnail?: string;
   data: any;
-  project_id?: number; // 🌟 新增字段
+  project_id?: number; // 🌟 必须加上
 }
 
 interface AssetLibraryState {
@@ -28,7 +28,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>((set, get) => ({
   fetchAssets: async (projectId?: number) => {
     set({ loading: true });
     try {
-      // 🌟 核心逻辑：带了 projectId 就查项目专属资产，不带就查全局资产
+      // 🌟 根据 projectId 动态请求
       const url = projectId ? `/assets/?project_id=${projectId}` : '/assets/';
       const res = await apiClient.get(url);
       const assets = res.data.filter((a: any) => ['image', 'prompt', 'video','workflow'].includes(a.type));
