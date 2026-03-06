@@ -153,93 +153,58 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       message.info("暂未实现：正在对接资产保存接口...");
   };
 
+// 在 ComfyUIEngineNode.tsx 中，直接覆盖 return (...)
   return (
     <BaseNode {...props}>
       <Handle type="target" position={Position.Left} id="in" />
-      
-      <div 
-        ref={drop} 
-        className="nodrag"
+
+      {/* 🚀 核心修复：移除 width: 300，替换为 100% 填充和防溢出 */}
+      <div
+        ref={drop}
         style={{
-          width: 300,
-          padding: 8, 
+          width: '100%',
+          height: '100%',
+          padding: 8,
           border: isOver ? '2px dashed #1890ff' : '1px dashed transparent',
           backgroundColor: isOver ? '#f0f7ff' : 'transparent',
           transition: 'all 0.3s',
-          borderRadius: 6
+          borderRadius: 6,
+          display: 'flex',
+          flexDirection: 'column',
+          minWidth: 0,
+          minHeight: 0
         }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          
-          <Space direction="vertical" size="small" style={{ width: '100%' }}>
-            <Select
-              size="small"
-              style={{ width: '100%' }}
-              placeholder="1. 选择算力平台"
-              options={providers.map(p => ({ label: p.display_name, value: p.id }))}
-              value={selectedProvider}
-              onChange={(val) => { 
-                setSelectedProvider(val); 
-                setSelectedKeyId(null);
-                updateNodeData(id, { selectedProvider: val });
-              }}
-            />
-            <Select
-              size="small"
-              style={{ width: '100%' }}
-              placeholder="2. 选择执行凭证"
-              options={availableKeys.map(k => ({ label: `${k.description || '凭证'}`, value: k.id }))}
-              value={selectedKeyId}
-              onChange={(val) => {
-                setSelectedKeyId(val);
-                updateNodeData(id, { selectedKeyId: val });
-              }}
-              disabled={!selectedProvider}
-            />
+        <div className="nodrag" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', minHeight: 0, paddingRight: 4 }}>
+
+          <Space direction="vertical" size="small" style={{ width: '100%', flexShrink: 0 }}>
+            <Select size="small" style={{ width: '100%' }} placeholder="1. 选择算力平台" options={providers.map(p => ({ label: p.display_name, value: p.id }))} value={selectedProvider} onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); updateNodeData(id, { selectedProvider: val }); }} />
+            <Select size="small" style={{ width: '100%' }} placeholder="2. 选择执行凭证" options={availableKeys.map(k => ({ label: `${k.description || '凭证'}`, value: k.id }))} value={selectedKeyId} onChange={(val) => { setSelectedKeyId(val); updateNodeData(id, { selectedKeyId: val }); }} disabled={!selectedProvider} />
           </Space>
 
-          {/* 🌟 修复 2：动态渲染暴露出来的参数表单 */}
           {parameters && Object.keys(parameters).length > 0 && (
-            <div style={{ background: '#fafafa', padding: 8, borderRadius: 6, border: '1px solid #e8e8e8' }}>
-              <Text strong style={{ fontSize: 12, marginBottom: 8, display: 'block', color: '#1890ff' }}>
-                ⚙️ 动态参数配置
-              </Text>
+            <div style={{ background: '#fafafa', padding: 8, borderRadius: 6, border: '1px solid #e8e8e8', flexShrink: 0 }}>
+              <Text strong style={{ fontSize: 12, marginBottom: 8, display: 'block', color: '#1890ff' }}>⚙️ 动态参数配置</Text>
               {Object.keys(parameters).map((paramName) => (
                 <div key={paramName} style={{ marginBottom: 8 }}>
                   <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>{paramName}</Text>
-                  <Input
-                    size="small"
-                    value={paramValues[paramName] || ''}
-                    placeholder={`输入 ${paramName}...`}
-                    onChange={(e) => {
-                      const newVals = { ...paramValues, [paramName]: e.target.value };
-                      setParamValues(newVals);
-                      updateNodeData(id, { paramValues: newVals });
-                    }}
-                  />
+                  <Input size="small" value={paramValues[paramName] || ''} placeholder={`输入 ${paramName}...`} onChange={(e) => { const newVals = { ...paramValues, [paramName]: e.target.value }; setParamValues(newVals); updateNodeData(id, { paramValues: newVals }); }} />
                 </div>
               ))}
             </div>
           )}
 
-          <div>
+          <div style={{ flexShrink: 0 }}>
             <Text type="secondary" style={{ fontSize: 11 }}><ApiOutlined /> JSON 源码 (自动生成)</Text>
-            <TextArea
-              rows={3}
-              style={{ fontSize: 10 }}
-              placeholder="将左侧的工作流资产拖拽到这里..."
-              value={workflowJson}
-              onChange={(e) => setWorkflowJson(e.target.value)}
-            />
+            <TextArea rows={3} style={{ fontSize: 10 }} placeholder="将左侧的工作流资产拖拽到这里..." value={workflowJson} onChange={(e) => setWorkflowJson(e.target.value)} />
           </div>
 
-          <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun}>
+          <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun} style={{ flexShrink: 0 }}>
             {isRunning ? '引擎轰鸣中...' : '提交渲染'}
           </Button>
 
-          {/* 🌟 修复 3：结果展示与保存 */}
           {resultOutput && (
-            <div style={{ marginTop: 8, background: '#f6ffed', padding: 8, borderRadius: 6, border: '1px solid #b7eb8f' }}>
+            <div style={{ background: '#f6ffed', padding: 8, borderRadius: 6, border: '1px solid #b7eb8f', flexShrink: 0 }}>
               <Text strong style={{ fontSize: 12, color: '#389e0d' }}>✅ 渲染完成</Text>
               <pre style={{ fontSize: 10, margin: '8px 0', maxHeight: 80, overflowY: 'auto' }}>
                 {JSON.stringify(resultOutput, null, 2)}

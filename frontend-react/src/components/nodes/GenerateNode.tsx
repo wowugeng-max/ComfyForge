@@ -240,120 +240,83 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     return handles;
   };
 
-return (
+// 在 GenerateNode.tsx 中，直接覆盖 return (...)
+  return (
     <BaseNode {...props}>
-      {/* 动态插槽渲染保持原样（但它外层已经被 BaseNode 的暗黑模式接管了） */}
       {renderDynamicHandles()}
 
-      {/* 稍微加宽一点以适应赛博排版 */}
-      <div style={{ width: 280 }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
 
-        {/* 1. 🎭 设定卡片：改造为暗黑全息面板 */}
-        {isAgentMode && (
-          <div style={{
-            marginBottom: 12,
-            background: isRoleCollapsed ? 'rgba(0,0,0,0.3)' : 'rgba(212, 107, 8, 0.1)',
-            borderRadius: 6,
-            border: isRoleCollapsed ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(212, 107, 8, 0.3)',
-            transition: 'all 0.3s'
-          }}>
-            <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-               <Text strong style={{ color: isRoleCollapsed ? '#94a3b8' : '#fa8c16', fontFamily: 'monospace', letterSpacing: 1 }}>
-                 [ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')[1]}
-               </Text>
-               {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10, color: '#64748b' }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
+        <div style={{ flexShrink: 0 }}>
+          {isAgentMode && (
+            // 🌟 角色选择面板：改为清爽的白/橙卡片
+            <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 6, border: isRoleCollapsed ? '1px solid #e2e8f0' : '1px solid #ffd591', transition: 'all 0.3s' }}>
+              <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                 <Text strong style={{ color: isRoleCollapsed ? '#64748b' : '#d46b08', fontFamily: 'monospace', letterSpacing: 1 }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')[1]}</Text>
+                 {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10, color: '#94a3b8' }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
+              </div>
+              {!isRoleCollapsed && (
+                 <div style={{ padding: '0 10px 10px 10px' }}>
+                    <Select className="nodrag" size="small" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
+                    <div style={{ background: '#ffffff', padding: '6px 8px', borderRadius: 4, border: '1px dashed #ffd591' }}><Text style={{ fontSize: 11, lineHeight: '1.5', display: 'block', color: '#475569' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text></div>
+                 </div>
+              )}
             </div>
-            {!isRoleCollapsed && (
-               <div style={{ padding: '0 10px 10px 10px' }}>
-                  <Select className="nodrag" size="small" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
-                  <div style={{ background: 'rgba(0,0,0,0.5)', padding: '6px 8px', borderRadius: 4, border: '1px dashed rgba(250, 140, 22, 0.3)' }}>
-                    <Text style={{ fontSize: 11, lineHeight: '1.5', display: 'block', color: '#cbd5e1' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text>
-                  </div>
-               </div>
-            )}
-          </div>
-        )}
+          )}
 
-        {/* 2. 🚀 HUD 级四模态切换器（完美替换原生的 Segmented） */}
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 10, color: '#94a3b8', letterSpacing: 1, marginBottom: 6, fontFamily: 'monospace' }}>
-            [ CORE_MODALITY_SELECT ]
-          </div>
-          <div style={{ display: 'flex', background: 'rgba(0,0,0,0.4)', borderRadius: 6, padding: 4, border: '1px solid rgba(255,255,255,0.05)' }}>
-            {[
-              { id: 'chat', icon: <MessageOutlined />, label: 'TEXT' },
-              { id: 'vision', icon: <EyeOutlined />, label: 'VISION' },
-              { id: 'image', icon: <PictureOutlined />, label: 'IMAGE' },
-              { id: 'video', icon: <VideoCameraOutlined />, label: 'VIDEO' }
-            ].map((m) => {
-              const isActive = mode === m.id;
-              const themeColor = data?.customColor || '#0ea5e9'; // 跟随节点拾色器的主题色
-              return (
-                <div
-                  key={m.id}
-                  onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }}
-                  style={{
-                    flex: 1, textAlign: 'center', padding: '6px 0', cursor: 'pointer',
-                    borderRadius: 4, fontSize: 11, fontWeight: isActive ? 800 : 500,
-                    color: isActive ? '#fff' : '#64748b',
-                    background: isActive ? themeColor : 'transparent',
-                    boxShadow: isActive ? `0 0 12px ${themeColor}` : 'none',
-                    transition: 'all 0.2s', fontFamily: '"SF Pro Display", sans-serif',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px'
-                  }}
-                >
-                  {m.icon}
-                  {m.label}
-                </div>
-              );
-            })}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: '#94a3b8', letterSpacing: 1, marginBottom: 6, fontFamily: 'monospace' }}>[ CORE_MODALITY_SELECT ]</div>
+            {/* 🌟 模态切换器：改为浅灰色质感 */}
+            <div style={{ display: 'flex', background: '#f1f5f9', borderRadius: 6, padding: 4, border: '1px solid #e2e8f0' }}>
+              {[
+                { id: 'chat', icon: <MessageOutlined />, label: 'TEXT' },
+                { id: 'vision', icon: <EyeOutlined />, label: 'VISION' },
+                { id: 'image', icon: <PictureOutlined />, label: 'IMAGE' },
+                { id: 'video', icon: <VideoCameraOutlined />, label: 'VIDEO' }
+              ].map((m) => {
+                const isActive = mode === m.id;
+                const themeColor = data?.customColor || '#0ea5e9';
+                return (
+                  <div key={m.id} onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }} style={{ flex: 1, textAlign: 'center', padding: '6px 0', cursor: 'pointer', borderRadius: 4, fontSize: 11, fontWeight: isActive ? 800 : 500, color: isActive ? '#fff' : '#64748b', background: isActive ? themeColor : 'transparent', boxShadow: isActive ? `0 2px 6px ${themeColor}66` : 'none', transition: 'all 0.2s', fontFamily: '"SF Pro Display", sans-serif', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                    {m.icon}{m.label}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        {/* 3. 核心表单区 */}
-        <Space direction="vertical" style={{ width: '100%' }} size={8}>
-
-          <Select className="nodrag" placeholder="1. 选择云端算力/Key" size="small" style={{ width: '100%' }} value={selectedKey || undefined} onChange={handleKeyChange} options={keys.map(k => ({ label: `${k.provider} - ${k.description || '默认'}`, value: k.id }))} />
+        <div className="nodrag" style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingRight: 4, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Select placeholder="1. 选择云端算力/Key" size="small" style={{ width: '100%', flexShrink: 0 }} value={selectedKey || undefined} onChange={handleKeyChange} options={keys.map(k => ({ label: `${k.provider} - ${k.description || '默认'}`, value: k.id }))} />
 
           {loading ? <div style={{ textAlign: 'center', margin: '10px 0' }}><Spin size="small" /></div> : (
             <>
-              <Select className="nodrag" placeholder="2. 选择 AI 模型" size="small" style={{ width: '100%' }} value={selectedModel || undefined} onChange={handleModelChange} disabled={!selectedKey} options={allModels.map(m => { let labelText = m.display_name; if (m.health_status === 'quota_exhausted') labelText = `🔴 ${m.display_name} (空)`; else if (m.health_status === 'unauthorized') labelText = `🟠 ${m.display_name} (无权)`; else if (m.health_status === 'error') labelText = `⚫ ${m.display_name} (错)`; return { label: labelText, value: m.model_name }; })} />
+              <Select placeholder="2. 选择 AI 模型" size="small" style={{ width: '100%', flexShrink: 0 }} value={selectedModel || undefined} onChange={handleModelChange} disabled={!selectedKey} options={allModels.map(m => { let labelText = m.display_name; if (m.health_status === 'quota_exhausted') labelText = `🔴 ${m.display_name} (空)`; else if (m.health_status === 'unauthorized') labelText = `🟠 ${m.display_name} (无权)`; else if (m.health_status === 'error') labelText = `⚫ ${m.display_name} (错)`; return { label: labelText, value: m.model_name }; })} />
 
-              {/* 🌟 动态参数面板挂载点：改为深色质感 */}
               {params && Object.keys(params).length > 0 && (
-                <div style={{ background: 'rgba(0,0,0,0.3)', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ background: '#f8fafc', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                   {renderParams()}
                 </div>
               )}
 
-              {/* 极客终端输入框 */}
-              <div>
+              <div style={{ flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, marginTop: 4 }}>
-                  <Text style={{ fontSize: 10, color: '#94a3b8', letterSpacing: 1, fontFamily: 'monospace' }}>
-                    &gt; PROMPT_INJECTION
-                  </Text>
+                  <Text style={{ fontSize: 10, color: '#94a3b8', letterSpacing: 1, fontFamily: 'monospace' }}>&gt; PROMPT_INJECTION</Text>
                   <div style={{ width: 6, height: 6, borderRadius: '50%', background: generating ? '#fadb14' : '#10b981', boxShadow: generating ? '0 0 6px #fadb14' : '0 0 6px #10b981' }} />
                 </div>
-                <TextArea className="nodrag" placeholder={isAgentMode ? "干预指令 (选填)..." : "描述你要生成的画面..."} size="small" rows={3} value={prompt} onChange={e => setPrompt(e.target.value)}
-                  style={{
-                    fontFamily: 'monospace',
-                    background: 'rgba(0,0,0,0.5)',
-                    color: '#38bdf8',
-                    border: '1px solid rgba(255,255,255,0.1)'
-                  }}
-                />
+                {/* 🌟 核心输入框：彻底摒弃黑底蓝字，改回纯净的白底黑字 */}
+                <TextArea placeholder={isAgentMode ? "干预指令 (选填)..." : "描述你要生成的画面..."} size="small" rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontFamily: 'monospace', background: '#ffffff', color: '#0f172a', border: '1px solid #cbd5e1' }} />
               </div>
 
-              <Button type="primary" size="small" block style={{ marginTop: 8, height: 32, fontWeight: 'bold', letterSpacing: 1 }} loading={generating} onClick={handleRun}>
+              <Button type="primary" size="small" block style={{ marginTop: 'auto', flexShrink: 0, height: 32, fontWeight: 'bold', letterSpacing: 1 }} loading={generating} onClick={handleRun}>
                 {generating ? 'PROCESSING...' : (isAgentMode ? 'INITIATE BRAIN' : 'START RENDER')}
               </Button>
             </>
           )}
-        </Space>
+        </div>
       </div>
 
       <Tooltip title="输出生成结果" placement="right">
-        {/* 输出端口加上荧光效果 */}
         <Handle type="source" position={Position.Right} isConnectable={isConnectable} id="out" style={{ background: data?.customColor || '#fa8c16', width: 12, height: 12, border: '2px solid rgba(255,255,255,0.8)', boxShadow: `0 0 8px ${data?.customColor || '#fa8c16'}` }} />
       </Tooltip>
     </BaseNode>

@@ -52,47 +52,37 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     });
   };
 
-  const renderPreview = () => {
-    if (!asset) return <Empty description="拖拽资产到此" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
+const renderPreview = () => {
+    if (!asset) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Empty description="拖拽资产到此" image={Empty.PRESENTED_IMAGE_SIMPLE} /></div>;
 
     const previewUrl = asset.thumbnail || (asset.data?.file_path ? `http://localhost:8000/${asset.data.file_path}` : null);
 
     return (
-      // 🌟 2. 只有内部预览区域是 nodrag，这样你可以复制文字或点击视频，而不影响整体节点的选中
-      <div className="nodrag" style={{ marginTop: 4, textAlign: 'center', width: '100%' }}>
+      // 🚀 核心修复：媒体容器占满剩余空间，图片/视频使用 object-fit: contain
+      <div className="nodrag" style={{ flex: 1, width: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
         {asset.type === 'image' && previewUrl && (
-          <img src={previewUrl} alt="preview" style={{ maxWidth: '100%', borderRadius: 4, border: '1px solid #e8e8e8' }} />
+          <img src={previewUrl} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }} />
         )}
 
         {asset.type === 'video' && previewUrl && (
-          <video src={previewUrl} style={{ maxWidth: '100%', borderRadius: 4 }} controls={true} autoPlay muted loop />
+          <video src={previewUrl} style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }} controls={true} autoPlay muted loop />
         )}
 
         {asset.type === 'prompt' && (
-          <div style={{
-            background: '#f6ffed', padding: '6px 8px', borderRadius: 6,
-            border: '1px solid #b7eb8f', fontSize: '12px', color: '#389e0d',
-            maxHeight: '60px', overflowY: 'auto', textAlign: 'left'
-          }}>
+          <div style={{ width: '100%', height: '100%', overflowY: 'auto', background: '#f6ffed', padding: '6px 8px', borderRadius: 6, border: '1px solid #b7eb8f', fontSize: '12px', color: '#389e0d', textAlign: 'left' }}>
             <FileTextOutlined style={{ marginRight: 4 }} />
             {asset.data?.content || asset.name}
           </div>
         )}
 
         {asset.type === 'workflow' && (
-          <div style={{
-            background: '#f9f0ff', padding: '8px', borderRadius: 6,
-            border: '1px solid #d3adf7', color: '#531dab', fontSize: '12px',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px'
-          }}>
+          <div style={{ width: '100%', height: '100%', background: '#f9f0ff', padding: '8px', borderRadius: 6, border: '1px solid #d3adf7', color: '#531dab', fontSize: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
             <div style={{ fontWeight: 'bold' }}><ApiOutlined style={{ marginRight: 4 }} />{asset.name || "工作流模板"}</div>
             <div style={{ fontSize: '10px', color: '#9254de' }}>(JSON 配置已加载)</div>
           </div>
         )}
 
-        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 8 }}>
-          资产 ID: {asset.id}
-        </Text>
+        <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 4, flexShrink: 0 }}>资产 ID: {asset.id}</Text>
       </div>
     );
   };
@@ -115,28 +105,27 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     );
   };
 
-  return (
+return (
     <BaseNode {...props}>
-      {/* 🌟 3. 去掉了这里的 nodrag！现在节点可以被正常点击选中和拖拽了 */}
+      {/* 🚀 核心修复：外壳 100% 填充 */}
       <div
         ref={drop}
         style={{
-          minHeight: 80,
-          minWidth: 120,
+          width: '100%',
+          height: '100%',
           border: isOver ? '2px dashed #1890ff' : '1px dashed #d9d9d9',
           borderRadius: 8,
           padding: '8px',
           background: isOver ? '#f0f7ff' : '#fafafa',
           transition: 'all 0.3s',
-          position: 'relative',
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'center'
+          alignItems: 'center',
+          minWidth: 0,
+          minHeight: 0
         }}
       >
-        {/* 顶部增加一个优雅的拖拽提示手柄 */}
-        <HolderOutlined style={{ color: '#d9d9d9', fontSize: 14, cursor: 'grab', marginBottom: 4 }} />
-
+        <HolderOutlined style={{ color: '#d9d9d9', fontSize: 14, cursor: 'grab', marginBottom: 4, flexShrink: 0 }} />
         {renderPreview()}
       </div>
 
