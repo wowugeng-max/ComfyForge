@@ -44,22 +44,29 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
       case 'chat':
       case 'prompt':
         return (
-          <div className="nodrag" style={{ maxHeight: 250, overflowY: 'auto', padding: '8px 12px', background: '#f5f5f5', borderRadius: 6, border: '1px solid #e8e8e8' }}>
+        // 文本区域：自己处理滚动 (overflowY: 'auto')
+          <div className="nodrag" style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', background: '#f5f5f5', borderRadius: 6, border: '1px solid #e8e8e8', minHeight: 0 }}>
             <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.6' }}>{displayData.content}</Paragraph>
           </div>
         );
       case 'image':
         const imgSrc = displayData.content.startsWith('http') || displayData.content.startsWith('data:') ? displayData.content : `data:image/jpeg;base64,${displayData.content}`;
         return (
-          <div className="nodrag" style={{ display: 'flex', justifyContent: 'center', background: '#fafafa', padding: 8, borderRadius: 6 }}>
-            <Image width="100%" style={{ maxHeight: 300, objectFit: 'contain', borderRadius: 4 }} src={imgSrc} alt="AI Generated Image" />
+         <div className="nodrag" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#fafafa', padding: 8, borderRadius: 6, minHeight: 0, overflow: 'hidden' }}>
+            <img
+              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }}
+              src={imgSrc}
+              alt="AI Generated Image"
+            />
           </div>
         );
       case 'video':
         const vidSrc = displayData.content.startsWith('http') || displayData.content.startsWith('data:') ? displayData.content : `data:video/mp4;base64,${displayData.content}`;
         return (
-          <div className="nodrag" style={{ display: 'flex', justifyContent: 'center', background: '#000', padding: 4, borderRadius: 6 }}>
-            <video controls style={{ width: '100%', maxHeight: 300, borderRadius: 4 }} src={vidSrc} />
+         // 🚀 重点同上：minHeight: 0
+          <div className="nodrag" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#000', padding: 4, borderRadius: 6, minHeight: 0, overflow: 'hidden' }}>
+            {/* 🚀 彻底干掉 maxHeight: 300 */}
+            <video controls style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }} src={vidSrc} />
           </div>
         );
       default:
@@ -108,9 +115,11 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
 
   return (
     <BaseNode {...props}>
-      <div style={{ width: 280, minHeight: 120 }}>
+      {/* ⚠️ 核心修改：去掉原来的 width: 280, minHeight: 120。 改为 100% 占满 BaseNode 提供的空间 */}
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' ,minHeight: 0}}>
         <Handle type="target" position={Position.Left} isConnectable={isConnectable} id="in" style={{ top: '50%', background: '#52c41a', width: 10, height: 10 }} />
-        <div style={{ marginBottom: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+
+        <div style={{ flexShrink: 0, marginBottom: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <DesktopOutlined style={{ color: '#52c41a' }} />
             <Text strong style={{ color: '#595959' }}>结果展示</Text>
@@ -121,7 +130,12 @@ const DisplayNode: React.FC<NodeProps> = (props) => {
             </Tooltip>
           )}
         </div>
-        {renderContent()}
+
+        {/* 这个包装器用来包裹你的 renderContent，让其可以弹性伸缩 */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            {renderContent()}
+        </div>
+
         <Handle type="source" position={Position.Right} isConnectable={isConnectable} id="out" style={{ top: '50%', background: '#fa8c16', width: 10, height: 10 }} />
       </div>
       <Modal title="💾 固化为资产" open={isModalVisible} onOk={handleSaveAsset} confirmLoading={isSaving} onCancel={() => setIsModalVisible(false)} okText="保存至资产库" width={360}>
