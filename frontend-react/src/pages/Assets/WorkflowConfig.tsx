@@ -7,8 +7,8 @@ import ReactFlow, {
   type Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Button, Card, message, Input, List, Space, Popconfirm } from 'antd';
-import { DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { Button, Card, message, Input, List, Space, Popconfirm, Row, Col, Typography, Select, Tag, Divider } from 'antd';
+import { DeleteOutlined, EyeOutlined, UploadOutlined, ArrowLeftOutlined, SaveOutlined, GlobalOutlined, ApiOutlined } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { workflowToFlow } from '../../utils/workflowToFlow';
 import { CustomNode } from '../../components/CustomNode';
@@ -16,9 +16,11 @@ import { ParamConfigPanel } from '../../components/ParamConfigPanel';
 import { BulkParamConfigPanel } from '../../components/BulkParamConfigPanel';
 import { getAllSuggestions, reportStats, extractStatsFromParameters, type Suggestion } from '../../utils/workflowSuggestions';
 import apiClient from '../../api/client';
+import { projectApi } from '../../api/projects'; // 🌟 引入项目 API
 
 const nodeTypes = { customNode: CustomNode };
-const { Search } = Input;
+const { Title, Text } = Typography;
+const { Option } = Select;
 
 // 定义常量，用于稳定空对象/空数组引用
 const EMPTY_OBJECT = {};
@@ -38,7 +40,12 @@ export default function WorkflowConfig() {
   const [bulkPanelVisible, setBulkPanelVisible] = useState(false);
   const [workflowJson, setWorkflowJson] = useState<any>(null);
   const [parameters, setParameters] = useState<Record<string, { node_id: string; field: string }>>({});
+
   const [assetName, setAssetName] = useState('');
+  // 🌟 新增：项目绑定状态
+  const [projectId, setProjectId] = useState<number | undefined>(undefined);
+  const [projects, setProjects] = useState<any[]>([]);
+
   const [loading, setLoading] = useState(false);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
   const [searchId, setSearchId] = useState('');
@@ -47,14 +54,21 @@ export default function WorkflowConfig() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 将 parameters 对象转换为数组便于渲染
+  // 🌟 挂载时拉取项目列表
+  useEffect(() => {
+    projectApi.getAll().then(res => {
+      setProjects(res.data);
+    }).catch(() => {
+      message.error('无法加载项目列表');
+    });
+  }, []);
+
   const paramList = Object.entries(parameters).map(([name, config]) => ({
     name,
     nodeId: config.node_id,
     field: config.field,
   }));
 
-  // 通用函数：根据 workflowJson 更新节点图和推荐
   const updateWorkflowData = useCallback(async (json: any) => {
     setWorkflowJson(json);
     const { nodes: flowNodes, edges: flowEdges } = workflowToFlow(json);
@@ -64,7 +78,6 @@ export default function WorkflowConfig() {
     try {
       const sugs = await getAllSuggestions(json);
       setSuggestionsMap(sugs);
-      // 只有在新建模式 (!id) 下才自动打开批量面板
       if (!id && Object.keys(sugs).length > 0) {
         setBulkPanelVisible(true);
       }
@@ -73,14 +86,10 @@ export default function WorkflowConfig() {
     } finally {
       setSuggestionsLoading(false);
     }
-  }, [id]);
+  }, [id, setNodes, setEdges]);
 
-  // 手动刷新推荐（重新获取并打开批量面板）
   const handleRefreshSuggestions = useCallback(async () => {
-    if (!workflowJson) {
-      message.warning('请先加载工作流');
-      return;
-    }
+    if (!workflowJson) return message.warning('请先加载工作流');
     setSuggestionsLoading(true);
     try {
       const sugs = await getAllSuggestions(workflowJson);
@@ -91,14 +100,12 @@ export default function WorkflowConfig() {
         message.info('没有新的推荐');
       }
     } catch (error) {
-      console.error('刷新推荐失败', error);
       message.error('刷新推荐失败');
     } finally {
       setSuggestionsLoading(false);
     }
   }, [workflowJson]);
 
-  // 文件上传处理
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (isViewMode) return;
     const file = event.target.files?.[0];
@@ -108,40 +115,25 @@ export default function WorkflowConfig() {
       try {
         const json = JSON.parse(e.target?.result as string);
         await updateWorkflowData(json);
-        message.success('工作流加载成功');
+        message.success('🎉 工作流蓝图加载成功');
       } catch (error) {
         message.error('JSON 格式错误');
       }
     };
     reader.readAsText(file);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // 定位节点
   const handleLocateNode = (nodeId?: string) => {
     const targetId = nodeId || searchId.trim();
     if (!targetId) return;
-    if (!reactFlowInstance) {
-      message.warning('画布未初始化');
-      return;
-    }
+    if (!reactFlowInstance) return message.warning('画布未初始化');
     const node = nodes.find(n => n.id === targetId);
-    if (!node) {
-      message.error(`节点 ${targetId} 不存在`);
-      return;
-    }
+    if (!node) return message.error(`节点 ${targetId} 不存在`);
     reactFlowInstance.setCenter(node.position.x, node.position.y, { duration: 800 });
-    setNodes(nds =>
-      nds.map(n => ({
-        ...n,
-        selected: n.id === targetId,
-      }))
-    );
+    setNodes(nds => nds.map(n => ({ ...n, selected: n.id === targetId })));
   };
 
-  // 加载资产数据（编辑或查看）
   useEffect(() => {
     if (id) {
       const fetchAsset = async () => {
@@ -154,6 +146,7 @@ export default function WorkflowConfig() {
             return;
           }
           setAssetName(asset.name);
+          setProjectId(asset.project_id); // 🌟 回显项目 ID
           setParameters(asset.data.parameters || {});
           await updateWorkflowData(asset.data.workflow_json);
         } catch (error) {
@@ -165,13 +158,7 @@ export default function WorkflowConfig() {
   }, [id, navigate, updateWorkflowData]);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    console.log('Clicked node data:', node.data);
-    console.log('Clicked node inputs:', node.data.inputs);
-    if (isViewMode) {
-      message.info('当前为只读模式，无法配置参数');
-      return;
-    }
-    // 构建该节点已存在的参数映射
+    if (isViewMode) return message.info('当前为只读模式，无法配置参数');
     const existing: Record<string, string> = {};
     Object.entries(parameters).forEach(([customName, config]) => {
       if (config.node_id === node.id) {
@@ -180,42 +167,27 @@ export default function WorkflowConfig() {
       }
     });
     setSelectedNode(node);
-    // 如果 existing 为空，使用常量 EMPTY_OBJECT 以避免触发重渲染
     setNodeExistingParams(Object.keys(existing).length === 0 ? EMPTY_OBJECT : existing);
     setPanelVisible(true);
   }, [parameters, isViewMode]);
 
-  // 保存参数配置（删除当前节点旧配置，合并新配置）
   const handleSaveParams = useCallback((newParams: Record<string, { node_id: string; field: string }>) => {
     if (isViewMode) return;
     setParameters(prev => {
-      const filtered = Object.fromEntries(
-        Object.entries(prev).filter(([_, config]) => config.node_id !== selectedNode?.id)
-      );
+      const filtered = Object.fromEntries(Object.entries(prev).filter(([_, config]) => config.node_id !== selectedNode?.id));
       return { ...filtered, ...newParams };
     });
     setPanelVisible(false);
-    message.success('参数配置已更新');
+    message.success('参数映射已更新');
   }, [selectedNode, isViewMode]);
 
-  // 批量保存参数（合并新参数）
   const handleBulkSave = useCallback((newParams: Record<string, { node_id: string; field: string }>) => {
     if (isViewMode) return;
     setParameters(prev => ({ ...prev, ...newParams }));
     setBulkPanelVisible(false);
-    message.success('批量参数配置已更新');
+    message.success('批量参数映射已更新');
   }, [isViewMode]);
 
-  // 关闭面板回调（稳定引用）
-  const handleCancelPanel = useCallback(() => {
-    setPanelVisible(false);
-  }, []);
-
-  const handleCancelBulkPanel = useCallback(() => {
-    setBulkPanelVisible(false);
-  }, []);
-
-  // 删除单个参数
   const handleRemoveParam = (paramName: string) => {
     if (isViewMode) return;
     setParameters(prev => {
@@ -225,38 +197,34 @@ export default function WorkflowConfig() {
     message.success(`参数 ${paramName} 已删除`);
   };
 
-  // 保存工作流资产并上报统计
   const handleSaveAsset = async () => {
     if (isViewMode) return;
-    if (!workflowJson) {
-      message.warning('请先加载工作流');
-      return;
-    }
+    if (!workflowJson) return message.warning('请先加载工作流 JSON');
+    if (!assetName.trim()) return message.warning('请填写工作流名称');
+
     setLoading(true);
     try {
       const payload = {
         type: 'workflow',
-        name: assetName || '未命名工作流',
+        name: assetName,
         description: '',
         tags: [],
-        data: {
-          workflow_json: workflowJson,
-          parameters: parameters,
-        },
+        data: { workflow_json: workflowJson, parameters: parameters },
+        project_id: projectId || null, // 🌟 保存时带上 project_id
       };
+
       let savedId: number;
       if (id) {
         await apiClient.put(`/assets/${id}`, payload);
         savedId = parseInt(id);
-        message.success('更新成功');
+        message.success('🎉 工作流更新成功');
       } else {
         const res = await apiClient.post('/assets/', payload);
         savedId = res.data.id;
-        message.success('创建成功');
-        navigate(`/assets/workflow-config/edit/${savedId}`);
+        message.success('🎉 工作流铸造成功');
+        navigate(`/assets/workflow-config/edit/${savedId}`, { replace: true });
       }
 
-      // 上报统计（异步，不阻塞）
       const stats = extractStatsFromParameters(parameters, workflowJson);
       reportStats(stats).catch(e => console.error('上报统计失败', e));
     } catch (error) {
@@ -266,138 +234,144 @@ export default function WorkflowConfig() {
     }
   };
 
-  // 稳定化传递给子组件的 nodeData
   const nodeDataForPanel = useMemo(() => {
     if (!selectedNode) return undefined;
     return { id: selectedNode.id, inputs: selectedNode.data.inputs };
   }, [selectedNode]);
 
   return (
-    <Card title={isViewMode ? '查看工作流参数' : (id ? '编辑工作流参数' : '新建工作流参数')}>
-      {/* 顶部工具栏 */}
-      <div style={{ marginBottom: 16, display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Input
-          placeholder="资产名称"
-          value={assetName}
-          onChange={(e) => !isViewMode && setAssetName(e.target.value)}
-          disabled={isViewMode}
-          style={{ width: 250 }}
-        />
-        <Input
-          type="file"
-          accept=".json,application/json"
-          onChange={handleFileUpload}
-          ref={fileInputRef}
-          disabled={isViewMode}
-          style={{ width: 250 }}
-        />
-        <Input
-          placeholder="节点ID"
-          value={searchId}
-          onChange={(e) => setSearchId(e.target.value)}
-          onPressEnter={() => handleLocateNode()}
-          style={{ width: 120 }}
-        />
-        <Button onClick={() => handleLocateNode()}>定位</Button>
-        {isEditMode && (
-          <Button onClick={handleRefreshSuggestions} loading={suggestionsLoading}>
-            刷新建议
-          </Button>
-        )}
-        {isEditMode && (
-          <Button type="primary" onClick={handleSaveAsset} loading={loading}>
-            保存资产
-          </Button>
-        )}
-        <Button onClick={() => navigate('/assets')}>返回列表</Button>
+    <div style={{ background: '#f8fafc', minHeight: '100%', padding: '24px 32px' }}>
+
+      {/* ================= 🌟 顶部全局操作条 ================= */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <Space size="middle">
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/assets')} type="text" style={{ fontSize: 16, color: '#64748b' }} />
+          <Title level={4} style={{ margin: 0, color: '#0f172a' }}>
+            {isViewMode ? '查看工作流配置' : (id ? '编辑工作流配置' : '新建工作流配置')}
+          </Title>
+          <Tag color="purple" style={{ margin: 0, borderRadius: 16, border: 'none' }}><ApiOutlined /> 蓝图模式</Tag>
+        </Space>
+        <Space>
+          <Button onClick={() => navigate('/assets')}>返回</Button>
+          {!isViewMode && (
+            <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={handleSaveAsset}>
+              固化保存
+            </Button>
+          )}
+        </Space>
       </div>
 
-      {/* 画布区域 */}
-      <div style={{ height: '60vh', border: '1px solid #ddd', marginBottom: 16 }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={onNodeClick}
-          nodeTypes={nodeTypes}
-          onInit={setReactFlowInstance}
-          fitView
-        >
-          <Controls />
-          <Background />
-        </ReactFlow>
-      </div>
+      <Row gutter={24}>
+        {/* ================= 🌟 左侧：画布与操作视窗 ================= */}
+        <Col span={16}>
+          <Card bordered={false} style={{ borderRadius: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.03)', height: '100%' }} bodyStyle={{ padding: 16, height: '100%', display: 'flex', flexDirection: 'column' }}>
 
-      {/* 已配置参数列表 */}
-      <Card
-        size="small"
-        title="已配置参数"
-        extra={paramList.length > 0 ? `共 ${paramList.length} 个` : '暂无'}
-        style={{ marginTop: 16 }}
-      >
-        {paramList.length > 0 ? (
-          <List
-            size="small"
-            bordered
-            dataSource={paramList}
-            renderItem={(item) => (
-              <List.Item
-                actions={[
-                  <Button
-                    type="text"
-                    icon={<EyeOutlined />}
-                    onClick={() => handleLocateNode(item.nodeId)}
-                    title="定位到节点"
-                  />,
-                  !isViewMode && (
-                    <Popconfirm
-                      title="确定删除此参数？"
-                      onConfirm={() => handleRemoveParam(item.name)}
-                      okText="是"
-                      cancelText="否"
-                    >
-                      <Button type="text" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  ),
-                ].filter(Boolean)}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <Space>
+                <input type="file" accept=".json,application/json" onChange={handleFileUpload} ref={fileInputRef} style={{ display: 'none' }} />
+                {!isViewMode && (
+                  <Button type="dashed" icon={<UploadOutlined />} onClick={() => fileInputRef.current?.click()}>
+                    导入 API JSON
+                  </Button>
+                )}
+                {isEditMode && (
+                  <Button onClick={handleRefreshSuggestions} loading={suggestionsLoading}>
+                    魔法推荐参数
+                  </Button>
+                )}
+              </Space>
+              <Space.Compact>
+                <Input placeholder="输入节点 ID 定位..." value={searchId} onChange={(e) => setSearchId(e.target.value)} onPressEnter={() => handleLocateNode()} style={{ width: 150 }} />
+                <Button onClick={() => handleLocateNode()}>定位</Button>
+              </Space.Compact>
+            </div>
+
+            <div style={{ flex: 1, background: '#f0f2f5', borderRadius: 8, overflow: 'hidden', minHeight: 600, border: '1px solid #e2e8f0' }}>
+              <ReactFlow
+                nodes={nodes} edges={edges}
+                onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                onNodeClick={onNodeClick}
+                nodeTypes={nodeTypes}
+                onInit={setReactFlowInstance}
+                fitView
+                minZoom={0.1}
               >
-                <Space direction="vertical" size={0}>
-                  <span style={{ fontWeight: 500 }}>{item.name}</span>
-                  <span style={{ fontSize: 12, color: '#666' }}>
-                    节点 {item.nodeId} · {item.field}
-                  </span>
-                </Space>
-              </List.Item>
-            )}
-          />
-        ) : (
-          <div style={{ textAlign: 'center', color: '#999', padding: 12 }}>
-            {isViewMode ? '暂无参数' : (suggestionsLoading ? '加载推荐中...' : '点击节点配置参数，已配置的参数将显示在这里')}
-          </div>
-        )}
-      </Card>
+                <Controls style={{ background: '#fff', borderRadius: 8, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+                <Background color="#ccc" gap={16} />
+              </ReactFlow>
+            </div>
+          </Card>
+        </Col>
 
-      {/* 批量配置面板 */}
-      <BulkParamConfigPanel
-        visible={bulkPanelVisible}
-        suggestionsMap={suggestionsMap}
-        workflowJson={workflowJson}
-        onSave={handleBulkSave}
-        onCancel={handleCancelBulkPanel}
-      />
+        {/* ================= 🌟 右侧：元数据与参数面板 ================= */}
+        <Col span={8} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-      {/* 单个节点配置面板（只读模式下不显示） */}
-      {!isViewMode && (
-        <ParamConfigPanel
-          visible={panelVisible}
-          nodeData={nodeDataForPanel}
-          existingParams={nodeExistingParams}
-          nodeSuggestions={suggestionsMap[selectedNode?.id || ''] || EMPTY_ARRAY}
-          onSave={handleSaveParams}
-          onCancel={handleCancelPanel}
-        />
-      )}
-    </Card>
+          {/* 元数据卡片 */}
+          <Card bordered={false} style={{ borderRadius: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}>
+            <Title level={5} style={{ marginBottom: 20 }}>基础档案</Title>
+            <div style={{ marginBottom: 16 }}>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>工作流名称</Text>
+              <Input size="large" placeholder="给蓝图起个名字..." value={assetName} onChange={(e) => setAssetName(e.target.value)} disabled={isViewMode} />
+            </div>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>归属沙盒作用域</Text>
+              <Select
+                size="large"
+                placeholder={<span><GlobalOutlined /> 设为全局公共工作流</span>}
+                allowClear showSearch optionFilterProp="children"
+                value={projectId} onChange={setProjectId}
+                disabled={isViewMode}
+                style={{ width: '100%' }}
+              >
+                {projects.map(p => <Option key={p.id} value={p.id}>📦 {p.name}</Option>)}
+              </Select>
+            </div>
+          </Card>
+
+          {/* 参数映射卡片 */}
+          <Card bordered={false} style={{ borderRadius: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.03)', flex: 1, display: 'flex', flexDirection: 'column' }} bodyStyle={{ padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Title level={5} style={{ margin: 0 }}>已暴露参数映射</Title>
+              <Tag color="blue">{paramList.length} 个参数</Tag>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {paramList.length > 0 ? (
+                <List
+                  size="small"
+                  dataSource={paramList}
+                  renderItem={(item) => (
+                    <List.Item
+                      style={{ background: '#f8fafc', borderRadius: 6, marginBottom: 8, padding: '8px 12px', border: '1px solid #f0f0f0' }}
+                      actions={[
+                        <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => handleLocateNode(item.nodeId)} title="在蓝图中定位" />,
+                        !isViewMode && (
+                          <Popconfirm title="移除此参数？" onConfirm={() => handleRemoveParam(item.name)}>
+                            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        ),
+                      ].filter(Boolean)}
+                    >
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <Text strong style={{ color: '#0958d9', fontSize: 13 }}>{item.name}</Text>
+                        <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace' }}>Node #{item.nodeId} ➔ {item.field}</Text>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              ) : (
+                <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px 0' }}>
+                  {isViewMode ? '暂无参数配置' : (suggestionsLoading ? '计算推荐参数中...' : '点击左侧蓝图中的节点，添加需要动态替换的参数')}
+                </div>
+              )}
+            </div>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 弹窗组件保持不变 */}
+      <BulkParamConfigPanel visible={bulkPanelVisible} suggestionsMap={suggestionsMap} workflowJson={workflowJson} onSave={handleBulkSave} onCancel={() => setBulkPanelVisible(false)} />
+      {!isViewMode && <ParamConfigPanel visible={panelVisible} nodeData={nodeDataForPanel} existingParams={nodeExistingParams} nodeSuggestions={suggestionsMap[selectedNode?.id || ''] || EMPTY_ARRAY} onSave={handleSaveParams} onCancel={() => setPanelVisible(false)} />}
+    </div>
   );
 }
