@@ -17,6 +17,8 @@ interface CanvasState {
   addNode: (node: Node) => void;
   removeNode: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: any) => void;
+  // 🌟 新增：批量覆盖画布数据（用于读档和清空）
+  setCanvasData: (nodes: Node[], edges: Edge[]) => void;
   saveHistory: () => void;
   undo: () => void;
   redo: () => void;
@@ -27,6 +29,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   edges: [],
   past: [],
   future: [],
+
+// 🌟 新增的实现
+  setCanvasData: (nodes, edges) => {
+    set({
+      nodes: structuredClone(nodes),
+      edges: structuredClone(edges),
+      past: [],   // 读档或清空时，重置撤销历史
+      future: []
+    });
+  },
 
   // 保存当前状态到 past（变化前），并清空 future
   saveHistory: () => {

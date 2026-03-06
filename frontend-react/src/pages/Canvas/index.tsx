@@ -15,6 +15,8 @@ import GenerateNode from '../../components/nodes/GenerateNode';
 import DisplayNode from '../../components/nodes/DisplayNode';
 import LoadAssetNode from '../../components/nodes/LoadAssetNode';
 import AssetLibrary from '../../components/AssetLibrary';
+import { useCanvasStore } from '../../stores/canvasStore';
+import ComfyUIEngineNode from '../../components/nodes/ComfyUIEngineNode';
 
 const { Text, Title } = Typography;
 const { Header, Sider, Content } = Layout;
@@ -23,13 +25,15 @@ const nodeTypes = {
   generate: GenerateNode,
   display: DisplayNode,
   loadAsset: LoadAssetNode,
+  comfyUIEngine: ComfyUIEngineNode,
 };
 
 // 预设所有的节点类型
 const AVAILABLE_NODES = [
   { type: 'generate', label: '🧠 AI 大脑节点', desc: '调用大模型生成文本或图像' },
   { type: 'display', label: '📺 结果展示节点', desc: '在画布中预览生成的结果' },
-  { type: 'loadAsset', label: '📦 资产输入节点', desc: '加载已有资产作为上下文' }
+  { type: 'loadAsset', label: '📦 资产输入节点', desc: '加载已有资产作为上下文' },
+  { type: 'comfyUIEngine', label: '🚀 算力引擎', desc: '调度本地 5090 或云端物理机渲染' }
 ];
 
 let idCounter = 0;
@@ -40,9 +44,13 @@ const CanvasWorkspace = () => {
   const navigate = useNavigate();
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
+  // 🌟 替换为：从 Zustand 全局 Store 中霸气接管一切
+  const {
+    nodes, edges,
+    onNodesChange, onEdgesChange, onConnect,
+    addNode, setCanvasData
+  } = useCanvasStore();
 
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [projectName, setProjectName] = useState('加载中...');
   const [saving, setSaving] = useState(false);
 
@@ -59,16 +67,16 @@ const CanvasWorkspace = () => {
         setProjectName(res.data.name);
         const savedData = res.data.canvas_data;
         if (savedData && savedData.nodes) {
-          setNodes(savedData.nodes || []);
-          setEdges(savedData.edges || []);
+         // 🌟 使用全局 Store 读档
+          setCanvasData(savedData.nodes || [], savedData.edges || []);
         }
       }).catch(() => {
         setProjectName('未命名项目');
       });
     }
-  }, [id, setNodes, setEdges]);
+  }, [id, setCanvasData]);
 
-  const onConnect = useCallback((params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
+ //const onConnect = useCallback((params: Connection | Edge) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
 
  // 1. 纯净的关闭菜单函数（给单击节点等其他操作使用）
   const closeMenu = useCallback(() => {
@@ -136,9 +144,9 @@ const CanvasWorkspace = () => {
     const newNode = {
       id: getId(), type, position: { x: menuConfig.flowX, y: menuConfig.flowY }, data: { label: label },
     };
-    setNodes((nds) => nds.concat(newNode));
-    setMenuConfig(null);
-    setSearchTerm('');
+    // 🌟 调用全局 Store 插入节点
+    addNode(newNode);
+    closeMenu(); // 复用我们上一步写的安全关闭逻辑
   };
 
   const handleSave = async () => {
@@ -165,7 +173,8 @@ const CanvasWorkspace = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><Title level={5} style={{ margin: 0 }}>{projectName}</Title><Tag color="processing" bordered={false}>创作中</Tag></div>
         </Space>
         <Space size="middle">
-          <Button icon={<ClearOutlined />} onClick={() => { setNodes([]); setEdges([]); }}>清空</Button>
+          {/* 🌟 一键清空全局状态 */}
+          <Button icon={<ClearOutlined />} onClick={() => setCanvasData([], [])}>清空</Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>保存项目</Button>
           <Button type="default" icon={<PlayCircleOutlined />} style={{ borderColor: '#52c41a', color: '#52c41a' }}>运行全局</Button>
         </Space>
