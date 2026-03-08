@@ -19,14 +19,9 @@ import {
   Spin, Radio
 } from 'antd';
 import {
-  PlusOutlined,
-  ReloadOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  CheckCircleOutlined,
-  CloudSyncOutlined,
-  ApiOutlined,
-  SettingOutlined
+  PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined,
+  CheckCircleOutlined, CloudSyncOutlined, ApiOutlined, SettingOutlined,
+  StarOutlined, StarFilled, SearchOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { keyApi } from '../../api/keys';
@@ -85,6 +80,7 @@ export default function KeyManager() {
   const [editingModel, setEditingModel] = useState<any | null>(null);
   const [modelForm] = Form.useForm();
   const [testingModel, setTestingModel] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState(''); // 🌟 新增：搜索过滤状态
 
   // 🌟 新增：批量配置弹窗的状态
   const [bulkModalVisible, setBulkModalVisible] = useState(false);
@@ -350,9 +346,9 @@ export default function KeyManager() {
             <Button size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
           </Tooltip>
 
-          {/* 只要是官方大模型 (目前限制了 gemini)，就显示同步按钮 */}
-          {['gemini', 'qwen', 'doubao', 'openai'].includes(record.provider?.toLowerCase() || '') && record.service_type === 'llm' && (
-            <Tooltip title="同步官方模型列表">
+{/* 🌟 修复：解除硬编码封印，允许所有 LLM 类型的厂商使用万能同步功能 */}
+          {record.service_type === 'llm' && (
+            <Tooltip title="同步官方/中转站模型列表">
               <Button size="small" type="dashed" icon={<CloudSyncOutlined />} loading={syncLoading === record.id} onClick={() => handleSyncModels(record)} />
             </Tooltip>
           )}
@@ -370,6 +366,33 @@ export default function KeyManager() {
   ];
 
 const modelColumns = [
+    // 🌟 新增：常用星标列
+    {
+      title: '常用',
+      dataIndex: 'is_favorite',
+      width: 60,
+      align: 'center' as const,
+      render: (isFav: boolean, record: any) => (
+        <div
+          onClick={async () => {
+            try {
+              await modelApi.toggleFavorite(record.id, !isFav);
+              fetchModels(currentKeyForModels!.id); // 刷新
+            } catch (e) {
+              message.error("状态切换失败");
+            }
+          }}
+          style={{ cursor: 'pointer', transition: 'transform 0.2s' }}
+          onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+          onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+        >
+          {isFav
+            ? <StarFilled style={{ color: '#faad14', fontSize: '18px' }} />
+            : <StarOutlined style={{ color: '#d9d9d9', fontSize: '18px' }} />
+          }
+        </div>
+      )
+    },
     { title: '展示名称', dataIndex: 'display_name', key: 'display_name' },
     { title: '模型代号 (Name)', dataIndex: 'model_name', key: 'model_name' },
     {
@@ -426,15 +449,15 @@ const modelColumns = [
              />
           )}
 
-          {/* 如果是手动模型，允许编辑基础信息和删除 */}
-          {record.is_manual ? (
-            <>
-              <a onClick={() => openModelModal(record)}>编辑基础</a>
-              <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
-                <a style={{ color: 'red' }}>删除</a>
-              </Popconfirm>
-            </>
-          ) : null}
+{/* 🌟 修复：所有模型（包含同步的）都允许“编辑基础”来修改能力标签 */}
+          <a onClick={() => openModelModal(record)}>编辑标签</a>
+
+          {/* 🌟 只有手动添加的模型才允许删除 (官方同步的不能删，如果不用可以禁用) */}
+          {record.is_manual && (
+            <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
+              <a style={{ color: 'red' }}>删除</a>
+            </Popconfirm>
+          )}
         </Space>
       ),
     }
@@ -542,7 +565,29 @@ const modelColumns = [
           </Space>
         }
       >
-        <Table columns={modelColumns} dataSource={models} rowKey="id" loading={modelsLoading} pagination={false} size="small" />
+        {/* 🌟 新增：搜索过滤框 */}
+        <div style={{ marginBottom: 16 }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+            placeholder="输入展示名称或模型代号进行过滤..."
+            allowClear
+            onChange={(e) => setSearchText(e.target.value)}
+            style={{ width: 300, borderRadius: 6 }}
+          />
+        </div>
+
+        <Table
+          columns={modelColumns}
+          // 🌟 修改：使用内存过滤后的数据
+          dataSource={models.filter(m =>
+            (m.display_name?.toLowerCase().includes(searchText.toLowerCase()) || '') ||
+            (m.model_name?.toLowerCase().includes(searchText.toLowerCase()) || '')
+          )}
+          rowKey="id"
+          loading={modelsLoading}
+          pagination={false}
+          size="small"
+        />
       </Drawer>
 
       {/* 🌟 批量配置弹窗 */}

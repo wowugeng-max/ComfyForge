@@ -84,65 +84,120 @@ class UniversalProxyAdapter(BaseAdapter):
         headers = self._build_headers()
         payload = self._build_payload(request_params, req_type)
 
-        # 动态端点
-        if req_type == "video":
-            endpoint = f"{self.base_url}/videos/generations"
-        elif req_type == "image":
-            endpoint = f"{self.base_url}/images/generations"
-        else:
-            endpoint = f"{self.base_url}/chat/completions"
+        is_dashscope = "dashscope" in self.base_url
 
-        async with httpx.AsyncClient(timeout=30.0) as client:  # 初始请求超时不用太长
+        # 🌟 1. 动态端点 & DashScope 官方原生协议拦截器
+        if is_dashscope and req_type in ["image", "video"]:
+            # 阿里百炼兼容模式的残缺修补：强行转为 DashScope 原生 API
+            dashscope_base = "https://dashscope.aliyuncs.com/api/v1"
+            headers["X-DashScope-Async"] = "enable"  # 阿里原生强制要求异步头
+
+            model_name = payload.get("model", "wanx-v1")
+
+            if req_type == "image":
+                endpoint = f"{dashscope_base}/services/aigc/text2image/image-synthesis"
+                payload = {
+                    "model": model_name,
+                    "input": {"prompt": request_params.get("prompt", "A white circle")},
+                    # 🌟 修复 1：阿里严苛校验，强行把探针的 1024x1024 替换为 1024*1024
+                    "parameters": {"size": request_params.get("size", "1024*1024").replace("x", "*")}
+                }
+            else:
+                endpoint = f"{dashscope_base}/services/aigc/video-generation/video-synthesis"
+                payload = {
+                    "model": model_name,
+                    "input": {"prompt": request_params.get("prompt", "A moving white cloud")},
+                    "parameters": {}
+                }
+                if "image_url" in request_params:
+                    payload["input"]["img_url"] = request_params["image_url"]
+
+            # 🌟 修复 2：图生图/图生视频防呆机制。如果是探针测试（未传图），自动塞一张阿里的公共测试图防拦截
+            if model_name in ["wanx-video", "wan2.1-i2v-turbo", "wan2.1-i2v-plus", "wanx-style-cosplay",
+                              "wanx-background-generation"]:
+                if "img_url" not in payload["input"]:
+                    payload["input"]["img_url"] = "https://img.alicdn.com/tfs/TB1WEcLb_tYBeNjy1XdXXXXXXa-256-256.png"
+
+        else:
+            # 标准 OpenAI 路由 (适用官方 OpenAI 及大部分中转站)
+            if req_type == "video":
+                endpoint = f"{self.base_url}/videos/generations"
+            elif req_type == "image":
+                endpoint = f"{self.base_url}/images/generations"
+            else:
+                endpoint = f"{self.base_url}/chat/completions"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                # ================= 1. 提交初始请求 =================
+                # ================= 2. 提交初始请求 =================
                 response = await client.post(endpoint, headers=headers, json=payload)
+
+                # 🌟 终极容错与降级 (仅对非 DashScope 的野路子中转站生效)
+                if response.status_code == 404 and req_type in ["image", "video"] and not is_dashscope:
+                    fallback_endpoint = f"{self.base_url}/chat/completions"
+                    fallback_payload = {
+                        "model": payload.get("model"),
+                        "messages": [{"role": "user",
+                                      "content": request_params.get("prompt", "Please draw a simple white circle")}],
+                    }
+                    response = await client.post(fallback_endpoint, headers=headers, json=fallback_payload)
+
                 response.raise_for_status()
                 data = response.json()
 
-                # ================= 2. 自动嗅探异步轮询 =================
+                # ================= 3. 自动嗅探异步轮询 =================
+                # 提取 DashScope 原生 task_id 或标准 task_id
                 task_id = data.get("task_id") or data.get("id")
-                status = str(data.get("status") or data.get("task_status", "")).lower()
+                if is_dashscope and "output" in data:
+                    task_id = task_id or data["output"].get("task_id")
 
-                # 如果发现任务处于排队/处理中，自动进入轮询模式
+                status = str(data.get("status") or data.get("task_status") or (
+                    data.get("output", {}).get("task_status", ""))).lower()
+
                 if task_id and status in ["pending", "processing", "submitted", "in_progress", "queued"]:
-                    # 兼容不同厂商的轮询规范 (默认 RESTful, 特殊处理阿里 DashScope)
-                    if "dashscope" in self.base_url:
-                        poll_endpoint = f"{self.base_url}/tasks/{task_id}"
+                    if is_dashscope:
+                        poll_endpoint = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
                     else:
                         poll_endpoint = f"{endpoint}/{task_id}"
 
-                    max_attempts = 60  # 最大轮询 60 次 (约 10 分钟)
+                    max_attempts = 60
                     for attempt in range(max_attempts):
-                        await asyncio.sleep(10)  # 每 10 秒查一次
+                        await asyncio.sleep(10)
 
                         poll_resp = await client.get(poll_endpoint, headers=headers)
                         poll_resp.raise_for_status()
                         poll_data = poll_resp.json()
 
-                        current_status = str(poll_data.get("status") or poll_data.get("task_status", "")).lower()
+                        current_status = str(poll_data.get("status") or poll_data.get("task_status") or (
+                            poll_data.get("output", {}).get("task_status", ""))).lower()
 
                         if current_status in ["succeeded", "success", "completed"]:
-                            data = poll_data  # 替换为最终成功的数据
+                            data = poll_data
                             break
                         elif current_status in ["failed", "error", "cancelled"]:
-                            return {"success": False, "error": f"异步任务执行失败: {poll_data}"}
-
-                        # 还在处理中则静默等待，继续下一个循环...
+                            error_msg = poll_data.get("output", {}).get("message", str(poll_data))
+                            return {"success": False, "error": f"异步任务执行失败: {error_msg}"}
                     else:
                         return {"success": False, "error": f"任务超时 (超过10分钟未出结果): {task_id}"}
 
-                # ================= 3. 结果提取清洗 =================
+                # ================= 4. 结果提取清洗 =================
                 if req_type in ["image", "video"]:
-                    # 多厂商防御性提取逻辑 (兼容 OpenAI, 阿里 DashScope, 智谱等)
                     if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
                         content = data["data"][0].get("url") or data["data"][0].get("b64_json")
-                    elif "output" in data:  # 阿里 DashScope (如 Wan2.2, 通义万相)
-                        content = data["output"].get("video_url") or data["output"].get("url") or data["output"].get(
-                            "image_url")
-                    elif "video_result" in data:  # 智谱 CogVideo
+                    elif "output" in data:
+                        # 阿里 DashScope 原生结果解析
+                        if "results" in data["output"] and len(data["output"]["results"]) > 0:
+                            content = data["output"]["results"][0].get("video_url") or data["output"]["results"][0].get(
+                                "url")
+                        else:
+                            content = data["output"].get("video_url") or data["output"].get("url") or data[
+                                "output"].get("image_url")
+                    elif "video_result" in data:
                         content = data["video_result"][0].get("url")
+                    elif "choices" in data:
+                        content = data["choices"][0]["message"]["content"]
                     else:
-                        content = str(data)  # 终极兜底
+                        content = str(data)
                 else:
                     content = data["choices"][0]["message"]["content"]
 

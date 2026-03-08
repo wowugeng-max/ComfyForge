@@ -22,4 +22,8 @@ export const modelApi = {
   // 🌟 新增：大类批量更新接口
   bulkUpdateUiParams: (payload: { api_key_id: number; capability: string; ui_params_array: any[] }) =>
     apiClient.put('/models/bulk/ui-params', payload),
+
+  // 🌟 新增：切换常用状态
+  toggleFavorite: (id: number, is_favorite: boolean) =>
+    apiClient.patch(`/models/${id}/favorite`, { is_favorite }),
 };

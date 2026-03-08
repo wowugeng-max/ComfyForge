@@ -3,7 +3,7 @@ import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Segmented, Space, Slider, Tooltip } from 'antd';
-import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined } from '@ant-design/icons';
+import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined,StarFilled } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useCanvasStore } from '../../stores/canvasStore';
 
@@ -39,6 +39,9 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   const [selectedRole, setSelectedRole] = useState<string>(data.selectedRole || 'free_agent');
   const [isRoleCollapsed, setIsRoleCollapsed] = useState<boolean>(true);
+
+  // 🌟 修复：在这里补上星标过滤器的状态声明（默认开启纯净模式）
+  const [showOnlyFavorites, setShowOnlyFavorites] = useState<boolean>(true);
 
   // 🌟 核心定义：智能体降级判断
   const isAgentMode = mode === 'chat' || mode === 'vision';
@@ -291,8 +294,38 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
           {loading ? <div style={{ textAlign: 'center', margin: '10px 0' }}><Spin size="small" /></div> : (
             <>
-              <Select placeholder="2. 选择 AI 模型" size="small" style={{ width: '100%', flexShrink: 0 }} value={selectedModel || undefined} onChange={handleModelChange} disabled={!selectedKey} options={allModels.map(m => { let labelText = m.display_name; if (m.health_status === 'quota_exhausted') labelText = `🔴 ${m.display_name} (空)`; else if (m.health_status === 'unauthorized') labelText = `🟠 ${m.display_name} (无权)`; else if (m.health_status === 'error') labelText = `⚫ ${m.display_name} (错)`; return { label: labelText, value: m.model_name }; })} />
-
+              {/* 🌟 修改点：给模型选择框旁边加一个“仅常用”的切换按钮 */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                <Select
+                  placeholder="2. 选择 AI 模型"
+                  size="small"
+                  style={{ flex: 1 }}
+                  value={selectedModel || undefined}
+                  onChange={handleModelChange}
+                  disabled={!selectedKey}
+                  options={allModels
+                    .filter(m => showOnlyFavorites ? m.is_favorite : true) // 🌟 过滤逻辑
+                    .map(m => {
+                      let labelText = m.display_name;
+                      if (m.health_status === 'quota_exhausted') labelText = `🔴 ${m.display_name} (空)`;
+                      else if (m.health_status === 'unauthorized') labelText = `🟠 ${m.display_name} (无权)`;
+                      else if (m.health_status === 'error') labelText = `⚫ ${m.display_name} (错)`;
+                      // 如果是常用模型，加个星星标记
+                      if (m.is_favorite && !showOnlyFavorites) labelText = `⭐ ${labelText}`;
+                      return { label: labelText, value: m.model_name };
+                    })
+                  }
+                />
+                <Tooltip title={showOnlyFavorites ? "当前仅显示标星的常用模型" : "当前显示全量模型"}>
+                  <Button
+                    type={showOnlyFavorites ? 'primary' : 'default'}
+                    icon={<StarFilled style={{ color: showOnlyFavorites ? '#fff' : '#faad14' }} />}
+                    size="small"
+                    onClick={() => setShowOnlyFavorites(!showOnlyFavorites)}
+                    style={{ borderRadius: 4 }}
+                  />
+                </Tooltip>
+              </div>
               {params && Object.keys(params).length > 0 && (
                 <div style={{ background: '#f8fafc', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                   {renderParams()}

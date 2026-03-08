@@ -6,6 +6,80 @@ import { providerApi, type ProviderData } from '../../api/providers';
 const { Text, Title } = Typography;
 const { Option } = Select;
 
+// 🌟 新增：主流大厂预设模板
+const PRESET_PROVIDERS = [
+  {
+    label: '阿里云 (千问)',
+    color: 'orange',
+    data: {
+      id: 'aliyun_dashscope',
+      display_name: '阿里百炼 (DashScope)',
+      api_format: 'openai_compatible',
+      auth_type: 'Bearer',
+      service_type: 'llm',
+      default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      supported_modalities: ['text', 'vision', 'image', 'video'],
+      is_active: true
+    }
+  },
+  {
+    label: '火山引擎 (豆包)',
+    color: 'blue',
+    data: {
+      id: 'volcengine',
+      display_name: '火山引擎 (豆包)',
+      api_format: 'openai_compatible',
+      auth_type: 'Bearer',
+      service_type: 'llm',
+      default_base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+      supported_modalities: ['text', 'vision'],
+      is_active: true
+    }
+  },
+  {
+    label: '深度求索 (DeepSeek)',
+    color: 'cyan',
+    data: {
+      id: 'deepseek',
+      display_name: 'DeepSeek 官方',
+      api_format: 'openai_compatible',
+      auth_type: 'Bearer',
+      service_type: 'llm',
+      default_base_url: 'https://api.deepseek.com/v1',
+      supported_modalities: ['text'],
+      is_active: true
+    }
+  },
+  {
+    label: 'OpenAI 官方',
+    color: 'green',
+    data: {
+      id: 'openai',
+      display_name: 'OpenAI (ChatGPT)',
+      api_format: 'openai_compatible',
+      auth_type: 'Bearer',
+      service_type: 'llm',
+      default_base_url: 'https://api.openai.com/v1',
+      supported_modalities: ['text', 'vision', 'image'],
+      is_active: true
+    }
+  },
+  {
+    label: 'Google Gemini',
+    color: 'purple',
+    data: {
+      id: 'google_gemini',
+      display_name: 'Google Gemini (API)',
+      api_format: 'openai_compatible', // Gemini 现在也支持 OpenAI 兼容格式
+      auth_type: 'Bearer',
+      service_type: 'llm',
+      default_base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      supported_modalities: ['text', 'vision'],
+      is_active: true
+    }
+  }
+];
+
 export default function ProviderManager() {
   const [providers, setProviders] = useState<ProviderData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -170,6 +244,30 @@ export default function ProviderManager() {
         headerStyle={{ borderBottom: '1px solid #f0f0f0' }}
         bodyStyle={{ padding: '24px' }}
       >
+          {/* 🌟 新增：快速预设填充区 (仅在新建时显示) */}
+        {!editingId && (
+          <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
+              💡 一键填入主流厂商官方网关：
+            </div>
+            <Space size={[8, 8]} wrap>
+              {PRESET_PROVIDERS.map(preset => (
+                <Tag
+                  key={preset.data.id}
+                  color={preset.color}
+                  style={{ cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    form.setFieldsValue(preset.data);
+                    message.info(`已应用 ${preset.label} 预设配置`);
+                  }}
+                >
+                  {preset.label}
+                </Tag>
+              ))}
+            </Space>
+          </div>
+        )}
+
         <Form form={form} layout="vertical" requiredMark={false}>
           <Title level={5} style={{ marginBottom: 16 }}>基础身份信息</Title>
           <Form.Item name="id" label="厂商唯一标识 (ID)" rules={[{ required: true, message: '标识必填' }]}>

@@ -1,42 +1,58 @@
 # backend/api/providers.py
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Optional
-
+from typing import List, Optional, Any
 from ..db import get_db
 from ..models.provider import Provider
-from ..models.schemas import ProviderOut
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
+# --- 1. 定义响应与输入模型 (解决 422 错误) ---
+class ProviderBase(BaseModel):
+    id: str
+    display_name: str
+    service_type: str = "llm"
+    api_format: str = "openai_compatible"
+    auth_type: str = "Bearer"
+    # 🌟 修复关键点：使用 Optional 允许数据库中的 NULL 值通过校验，并给定默认空列表
+    supported_modalities: Optional[List[str]] = []
+    default_base_url: Optional[str] = None
+    is_active: bool = True
 
-def seed_providers_if_empty(db: Session):
-    """如果表是空的，自动注入初始数据"""
-    if db.query(Provider).first() is None:
-        initial_providers = [
-            # --- 大模型 LLM ---
-            Provider(id="gemini", display_name="Google Gemini", service_type="llm"),
-            Provider(id="qwen", display_name="阿里千问 (Qwen)", service_type="llm"),
-            Provider(id="doubao", display_name="字节豆包 (Doubao)", service_type="llm"),
-            Provider(id="openai", display_name="OpenAI", service_type="llm"),
-            Provider(id="custom_llm", display_name="自定义 / 中转站", service_type="llm"),
-            # --- 算力引擎 ComfyUI ---
-            Provider(id="local_comfyui", display_name="本地 / 自建节点", service_type="comfyui",
-                     default_base_url="http://127.0.0.1:8188"),
-            Provider(id="runninghub", display_name="RunningHub 云端", service_type="comfyui"),
-            Provider(id="civitai", display_name="Civitai (C站) 云算力", service_type="comfyui"),
-        ]
-        db.add_all(initial_providers)
-        db.commit()
+class ProviderOut(ProviderBase):
+    model_config = ConfigDict(from_attributes=True) # 🌟 解决 500 序列化错误
 
+# --- 2. 路由实现 (解决 405 错误) ---
 
 @router.get("/", response_model=List[ProviderOut])
-def list_providers(service_type: Optional[str] = None, db: Session = Depends(get_db)):
-    """获取提供商列表，支持按类型过滤"""
-    # 每次请求顺手检查一下要不要初始化种子数据（很轻量）
-    seed_providers_if_empty(db)
+def list_providers(db: Session = Depends(get_db)):
+    return db.query(Provider).all()
 
-    query = db.query(Provider).filter(Provider.is_active == True)
-    if service_type:
-        query = query.filter(Provider.service_type == service_type)
-    return query.all()
+@router.post("/")
+def create_provider(data: ProviderBase, db: Session = Depends(get_db)):
+    existing = db.query(Provider).filter(Provider.id == data.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="厂商标识 ID 已存在")
+    new_provider = Provider(**data.model_dump())
+    db.add(new_provider)
+    db.commit()
+    return {"status": "success", "message": "新厂商配置已注入"}
+
+@router.put("/{provider_id}")
+def update_provider(provider_id: str, data: ProviderBase, db: Session = Depends(get_db)):
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    if not provider:
+        raise HTTPException(status_code=404, detail="找不到该厂商")
+    for key, value in data.model_dump().items():
+        setattr(provider, key, value)
+    db.commit()
+    return {"status": "success", "message": "配置已更新"}
+
+@router.delete("/{provider_id}")
+def delete_provider(provider_id: str, db: Session = Depends(get_db)):
+    provider = db.query(Provider).filter(Provider.id == provider_id).first()
+    if provider:
+        db.delete(provider)
+        db.commit()
+    return {"status": "success"}

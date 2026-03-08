@@ -19,6 +19,8 @@ class ModelConfig(Base):
     is_active = Column(Boolean, default=True)
     # 🌟 核心新增：区分同步模型与手动模型
     is_manual = Column(Boolean, default=False)
+    # 🌟 新增：常用模型标记
+    is_favorite = Column(Boolean, default=False)
     last_synced = Column(DateTime, default=datetime.utcnow)
 
     # 🌟 核心新增：健康追踪系统

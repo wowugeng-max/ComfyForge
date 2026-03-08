@@ -74,11 +74,13 @@ class ModelSyncer:
             ).first()
 
             if not db_model:
+
+                clean_display_name = rm.get("display_name", m_id).replace("models/", "")
                 # 插入全新的模型记录
                 db_model = ModelConfig(
                     provider=provider_id,
                     model_name=m_id,
-                    display_name=rm.get("display_name", m_id),
+                    display_name=clean_display_name,
                     api_key_id=key_id,
                     capabilities=caps,
                     context_ui_params=ui_params,
@@ -91,8 +93,9 @@ class ModelSyncer:
                 # 更新老模型的数据，并重新激活
                 db_model.is_active = True
                 db_model.capabilities = caps
-                db_model.context_ui_params = ui_params
-                db_model.last_synced = datetime.utcnow()
+                # 🌟 修复：只重新激活，不再用默认规则覆盖用户的自定义 capabilities 和 ui_params！
+                #db_model.context_ui_params = ui_params
+                #db_model.last_synced = datetime.utcnow()
 
         # 提交事务
         db.commit()

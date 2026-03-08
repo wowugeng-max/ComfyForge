@@ -168,7 +168,7 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=400, detail="绑定的 API Key 无效或未启用")
 
-    # 2. 🌟 获取该模型所属的 Provider 完整配置记录 (Phase 9 新增)
+    # 2. 获取该模型所属的 Provider 完整配置记录
     from ..models.provider import Provider
     provider_record = db.query(Provider).filter(Provider.id == db_model.provider).first()
     if not provider_record:
@@ -176,34 +176,49 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
 
     try:
         from ..core.adapters.factory import AdapterFactory
-        # 1. 拿到的是“类” (Adapter Class)
         adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
-
-        # 2. 🌟 实例化：在这里传入 provider_record 和 key_record
-        # 这样 UniversalProxyAdapter 才能拿到它需要的初始化参数
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 3. 执行测试
-        probe_params = {"model": db_model.model_name, "prompt": "Hi", "type": "text"}
-        result = await adapter.generate(probe_params)
+        # 🌟 3. 核心修复：多模态自适应探针
+        # 🌟 3. 核心修复：多模态自适应探针 (带名字嗅探的防呆增强版)
+        probe_type = "text"  # 默认兜底为文本
 
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # [判断层级 1]：优先信任数据库的能力标签
+        if db_model.capabilities:
+            if db_model.capabilities.get("image"):
+                probe_type = "image"
+            elif db_model.capabilities.get("video"):
+                probe_type = "video"
 
-    try:
-        # 5. 🌟 统一调用：使用重构后的异步 generate() 方法代替旧的 call()
-        # 构造极简探测参数
+        # [判断层级 2]：终极防呆兜底！如果标签没打对，尝试从名字里提取关键字
+        if probe_type == "text":
+            model_name_lower = db_model.model_name.lower()
+            if any(k in model_name_lower for k in ["image", "mj", "midjourney", "dall-e", "draw", "cogview"]):
+                probe_type = "image"
+            elif any(k in model_name_lower for k in ["video", "sora", "kling", "wan", "veo", "runway"]):
+                probe_type = "video"
+
+        # 组装符合万能代理要求的参数
         probe_params = {
             "model": db_model.model_name,
-            "prompt": "Hi",
-            "type": "text",
-            "max_tokens": 10,
-            "temperature": 0.1
+            "type": probe_type
         }
 
+        # 根据不同模态分配专用的安全测试 Prompt
+        if probe_type == "image":
+            probe_params["prompt"] = "A simple white circle on a black background, minimal design."
+            probe_params["size"] = "1024x1024"
+        elif probe_type == "video":
+            probe_params["prompt"] = "A simple white cloud moving slowly."
+        else:
+            probe_params["prompt"] = "Hello! Could you please acknowledge this test message?"
+            probe_params["max_tokens"] = 20
+            probe_params["temperature"] = 0.1
+
+        # 4. 执行生成测试
         result = await adapter.generate(probe_params)
 
-        # 6. 根据万能代理返回的 success 状态更新健康档案
+        # 5. 更新状态
         if isinstance(result, dict) and result.get("success"):
             db_model.health_status = "healthy"
             status_msg = "测试通过：模型运行健康！"
@@ -214,7 +229,6 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         error_str = str(e).lower()
         print(f"Test Probe Error: {error_str}")
-        # 保持原有的错误映射逻辑
         if "429" in error_str or "quota" in error_str:
             db_model.health_status = "quota_exhausted"
             status_msg = "测试失败：额度已耗尽或频率受限。"
@@ -233,7 +247,6 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         "message": status_msg,
         "last_tested_at": db_model.last_tested_at
     }
-
 
 @router.put("/{model_id:int}/ui-params")
 def update_model_ui_params(model_id: int, payload: UIParamsUpdate, db: Session = Depends(get_db)):
@@ -275,3 +288,22 @@ def bulk_update_ui_params(payload: BulkUIParamsUpdate, db: Session = Depends(get
     db.commit()
 
     return {"status": "success", "message": f"成功批量覆写了 {updated_count} 个模型的 {payload.capability} 参数！"}
+
+
+# backend/api/models.py 文件末尾
+
+class FavoriteUpdate(BaseModel):
+    is_favorite: bool
+
+
+@router.patch("/{model_id:int}/favorite")
+def toggle_model_favorite(model_id: int, payload: FavoriteUpdate, db: Session = Depends(get_db)):
+    """轻量级接口：切换模型的常用状态"""
+    db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    if not db_model:
+        raise HTTPException(status_code=404, detail="未找到该模型")
+
+    db_model.is_favorite = payload.is_favorite
+    db.commit()
+
+    return {"status": "success", "is_favorite": db_model.is_favorite}
