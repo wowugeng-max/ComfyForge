@@ -26,13 +26,20 @@ export default function ProviderManager() {
   useEffect(() => { loadData(); }, []);
 
   const onEdit = (record?: ProviderData) => {
-    if (record) {
+   if (record) {
       setEditingId(record.id);
       form.setFieldsValue(record);
     } else {
       setEditingId(null);
       form.resetFields();
-      form.setFieldsValue({ is_active: true, api_format: 'openai_compatible', auth_type: 'Bearer' });
+      // 🌟 确保这里补全了后端要求的必填项
+      form.setFieldsValue({
+        is_active: true,
+        api_format: 'openai_compatible',
+        auth_type: 'Bearer',    // 👈 必填：鉴权方式
+        service_type: 'llm',    // 👈 必填：服务大类
+        supported_modalities: ['text']
+      });
     }
     setDrawerOpen(true);
   };
