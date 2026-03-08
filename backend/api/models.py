@@ -72,9 +72,16 @@ async def sync_by_key_id(key_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="该 API Key 未启用，无法同步")
 
     try:
-        new_count = await ModelSyncer.sync_provider(db, key_record.provider, key_record.key, key_id)
+        # 🌟 核心修复：对齐 Phase 9 新版引擎，移除冗余的明文 key_record.key 参数
+        new_count = await ModelSyncer.sync_provider(
+            db=db,
+            provider_id=key_record.provider,
+            key_id=key_id
+        )
         return {"status": "success", "message": f"同步完成，为该 Key 更新了 {new_count} 个模型"}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"同步服务内部错误: {str(e)}")
 
 
@@ -154,46 +161,66 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
 
+    # 1. 获取对应的 API Key 记录
     key_record = db.query(APIKey).filter(APIKey.id == db_model.api_key_id).first()
     if not key_record or not key_record.is_active:
         db_model.health_status = "error"
         db.commit()
-        raise HTTPException(status_code=400, detail="绑定的 API Key 无效")
+        raise HTTPException(status_code=400, detail="绑定的 API Key 无效或未启用")
+
+    # 2. 🌟 获取该模型所属的 Provider 完整配置记录 (Phase 9 新增)
+    from ..models.provider import Provider
+    provider_record = db.query(Provider).filter(Provider.id == db_model.provider).first()
+    if not provider_record:
+        raise HTTPException(status_code=400, detail=f"数据库中未找到供应商 [{db_model.provider}] 的运行配置")
 
     try:
         from ..core.adapters.factory import AdapterFactory
-        adapter = AdapterFactory.get_adapter(db_model.provider)
+        # 1. 拿到的是“类” (Adapter Class)
+        adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
+
+        # 2. 🌟 实例化：在这里传入 provider_record 和 key_record
+        # 这样 UniversalProxyAdapter 才能拿到它需要的初始化参数
+        adapter = adapter_class(provider=provider_record, api_key=key_record)
+
+        # 3. 执行测试
+        probe_params = {"model": db_model.model_name, "prompt": "Hi", "type": "text"}
+        result = await adapter.generate(probe_params)
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        # 🌟 USE THE NEW ASYNC .generate() METHOD INSTEAD OF .call() 🌟
-        # Send a minimal probe to test connection
-        result = await adapter.generate(
-            api_key=key_record.key,
-            model_name=db_model.model_name,
-            prompt="Hi",
-            type="text",
-            extra_params={"temperature": 0.1, "max_output_tokens": 10}
-        )
+        # 5. 🌟 统一调用：使用重构后的异步 generate() 方法代替旧的 call()
+        # 构造极简探测参数
+        probe_params = {
+            "model": db_model.model_name,
+            "prompt": "Hi",
+            "type": "text",
+            "max_tokens": 10,
+            "temperature": 0.1
+        }
 
-        # If no exception was raised, it means we got a response successfully!
-        db_model.health_status = "healthy"
-        status_msg = "测试通过：模型运行健康！"
+        result = await adapter.generate(probe_params)
+
+        # 6. 根据万能代理返回的 success 状态更新健康档案
+        if isinstance(result, dict) and result.get("success"):
+            db_model.health_status = "healthy"
+            status_msg = "测试通过：模型运行健康！"
+        else:
+            db_model.health_status = "error"
+            status_msg = f"测试失败：{result.get('error', '未知错误')}"
 
     except Exception as e:
         error_str = str(e).lower()
         print(f"Test Probe Error: {error_str}")
-        # Accurately map errors
-        if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+        # 保持原有的错误映射逻辑
+        if "429" in error_str or "quota" in error_str:
             db_model.health_status = "quota_exhausted"
-            status_msg = "测试失败：免费额度已耗尽，或频率受限。"
+            status_msg = "测试失败：额度已耗尽或频率受限。"
         elif "403" in error_str or "unauthorized" in error_str:
             db_model.health_status = "unauthorized"
-            status_msg = "测试失败：无权限访问此模型。"
-        elif "not found" in error_str or "404" in error_str:
-            db_model.health_status = "error"
-            status_msg = "测试失败：官方接口中不存在该模型。"
+            status_msg = "测试失败：API Key 鉴权失败。"
         else:
             db_model.health_status = "error"
             status_msg = f"测试失败：{str(e)}"

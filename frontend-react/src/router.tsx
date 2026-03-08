@@ -11,6 +11,7 @@ import VideoWorkshop from './pages/VideoWorkshop';
 import WorkflowConfig from './pages/Assets/WorkflowConfig';
 import RulesPage from './pages/Rules';
 import CanvasPage from './pages/Canvas';
+import ProviderManager from './pages/Providers'; // 🌟 引入新页面
 
 const router = createBrowserRouter([
   // 🏠 空间 A：中枢大厅 (带有全局左侧侧边栏)
@@ -31,7 +32,8 @@ const router = createBrowserRouter([
       { path: 'assets/workflow-config/:mode?/:id?', element: <WorkflowConfig /> },
       { path: 'rules', element: <RulesPage /> },
       // 保留一个旧的独立画布入口供测试用
-      { path: 'canvas', element: <CanvasPage /> }
+      { path: 'canvas', element: <CanvasPage /> },
+        { path: 'providers', element: <ProviderManager /> }, // 🌟 挂载新路由
     ],
   },
   // 🎨 空间 B：沉浸式创作台 (直接渲染画布，不包含任何全局菜单)

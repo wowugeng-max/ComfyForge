@@ -159,12 +159,36 @@ class APIKeyOut(APIKeyBase):
 
 
 # --- 5. 提供商 (Provider) 交互模型 ---
-class ProviderOut(BaseModel):
+
+class ProviderBase(BaseModel):
     id: str
     display_name: str
     service_type: str
+
+    # 🌟 Phase 9 新增：代理驱动参数
+    api_format: str = "openai_compatible"
+    auth_type: str = "Bearer"
+    supported_modalities: Optional[List[str]] = Field(default_factory=lambda: ["text"])
+
     default_base_url: Optional[str] = None
-    is_active: bool
+    is_active: bool = True
     icon: Optional[str] = None
 
+
+class ProviderCreate(ProviderBase):
+    pass
+
+
+class ProviderUpdate(BaseModel):
+    display_name: Optional[str] = None
+    service_type: Optional[str] = None
+    api_format: Optional[str] = None
+    auth_type: Optional[str] = None
+    supported_modalities: Optional[List[str]] = None
+    default_base_url: Optional[str] = None
+    is_active: Optional[bool] = None
+    icon: Optional[str] = None
+
+
+class ProviderOut(ProviderBase):
     model_config = ConfigDict(from_attributes=True)

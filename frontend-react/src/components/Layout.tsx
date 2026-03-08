@@ -6,6 +6,7 @@ import {
   KeyOutlined,
   ApiOutlined,
   SettingOutlined,
+    BlockOutlined,
 } from '@ant-design/icons';
 
 const { Content, Sider } = AntLayout;
@@ -19,6 +20,7 @@ export default function Layout() {
     if (path === '/') return 'dashboard';
     if (path.startsWith('/assets')) return 'assets';
     if (path.startsWith('/keys')) return 'keys';
+    if (path.startsWith('/providers')) return 'providers'; // 🌟 识别高亮
     if (path.startsWith('/rules')) return 'rules';
     if (path.startsWith('/pipeline')) return 'pipeline';
     return 'dashboard';
@@ -49,6 +51,7 @@ export default function Layout() {
             { key: 'assets', icon: <FileImageOutlined />, label: <Link to="/assets">全局资产库</Link> },
             { type: 'divider' }, // 优雅的分割线
             { key: 'keys', icon: <KeyOutlined />, label: <Link to="/keys">算力与模型 (Keys)</Link> },
+              { key: 'providers', icon: <BlockOutlined />, label: <Link to="/providers">厂商中枢 (Providers)</Link> }, // 🌟 侧边栏入口
             { key: 'pipeline', icon: <ApiOutlined />, label: <Link to="/pipeline">图像生成管道</Link> },
             { key: 'rules', icon: <SettingOutlined />, label: <Link to="/rules">系统推荐规则</Link> },
           ]}

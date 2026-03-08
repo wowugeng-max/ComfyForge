@@ -26,7 +26,7 @@ class ProviderRegistry:
         adapter_cls = cls._adapters.get(provider_lower)
         if not adapter_cls:
             raise ValueError(f"暂不支持该供应商的生成调用: {provider_id}")
-        return adapter_cls()
+        return adapter_cls
 
     @classmethod
     def get_syncer(cls, provider_id: str):

@@ -2,10 +2,11 @@
 import os
 import uuid
 import asyncio
+import inspect
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, BackgroundTasks, Depends
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -22,10 +23,9 @@ from backend.core.executors.cloud_video_loop import CloudVideoLoopExecutor
 from backend.core.executors.real_video_loop import RealVideoLoopExecutor
 
 # 统一集中导入所有 API 路由模块
-from backend.api import assets, projects, keys, suggestions, recommendation_rules, models
-from backend.models.api_key import APIKey
-from fastapi import HTTPException
 from backend.api import assets, projects, keys, suggestions, recommendation_rules, models, providers
+from backend.models.api_key import APIKey
+from backend.models.provider import Provider  # 🌟 Phase 9: 引入提供商配置底座
 
 # 任务存储（临时，后续会用数据库）
 tasks = {}
@@ -97,9 +97,8 @@ class TaskResponse(BaseModel):
     status: str
 
 
-# --- 1. 更新 Pydantic 请求模型 ---
 class GenerateRequest(BaseModel):
-    api_key_id: int  # 核心新增：直接接收前端传来的 Key ID，实现严格的 Key-模型 绑定
+    api_key_id: int  # 严格的 Key-模型 绑定
     provider: str
     model: str
     type: str  # 'image', 'video', 'prompt', 'text'
@@ -128,7 +127,6 @@ async def run_direct_pipeline(request: DirectAPITaskRequest, background_tasks: B
             if isinstance(value, str) and len(value) > 100:
                 if value.startswith("iVBOR") or value.startswith("/9j/") or value.startswith("data:image"):
                     try:
-                        # 注入依赖的 DB
                         asset_id = save_image_from_base64(value, db, source_ids=visited_ids)
                         created_asset_ids[key] = asset_id
                     except Exception as e:
@@ -206,44 +204,16 @@ async def get_file(file_path: str):
     return FileResponse(full_path)
 
 
-# --- 3. 全新的轻量级生成路由 ---
+# --- 5. 🌟 全新的配置驱动生成路由 (万物皆配置终极枢纽) ---
 @app.post("/api/generate")
 async def generate_content(request: GenerateRequest, db: Session = Depends(get_db)):
-    # 1. 从数据库中获取真正的明文 API Key
+    # 1. 获取模型运行的“凭证”与“规则底座”
     key_record = db.query(APIKey).filter(APIKey.id == request.api_key_id).first()
     if not key_record or not key_record.is_active:
         raise HTTPException(status_code=400, detail="无效或未启用的 API Key，请在 Key 管理页面检查")
 
-    # 2. 通过工厂获取对应的轻量级适配器实例
-    try:
-        adapter = AdapterFactory.get_adapter(request.provider)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    provider_record = db.query(Provider).filter(Provider.id == request.provider).first()
+    if not provider_record:
+        raise HTTPException(status_code=400, detail=f"数据库中未找到 Provider [{request.provider}] 的运行配置")
 
-    # 3. 直接调用异步生成方法 (摒弃了旧的线程池 run_in_executor，性能大幅提升)
-    try:
-        result = await adapter.generate(
-            api_key=key_record.key,  # 动态注入查到的明文 Key
-            model_name=request.model,  # 前端选中的具体模型名称 (如 gemini-1.5-pro)
-            prompt=request.prompt,
-            type=request.type,
-            extra_params=request.params or {},
-        # 🌟 核心修复：连通大动脉，将数据库中的 URL 传给底层适配器
-            base_url = key_record.base_url
-        )
-    except Exception as e:
-        # 捕获官方 SDK 抛出的网络错误或额度超限等异常
-        raise HTTPException(status_code=500, detail=f"模型生成失败: {str(e)}")
-
-    # 4. 根据返回类型保存资产到本地 SQLite 数据库
-    asset_id = None
-    if request.type == "image" and result.get("type") == "image":
-        asset_id = save_image_from_base64(result["content"], db)
-    elif request.type == "video" and result.get("type") == "video":
-        asset_id = save_video_as_asset(result["content"], db)
-
-    return {
-        "type": result.get("type", "text"),
-        "content": result.get("content", ""),
-        "asset_id": asset_id
-    }
+    # 2.

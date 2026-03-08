@@ -4,7 +4,7 @@ import asyncio
 import time  # 新增导入
 from typing import Dict, Any, List
 
-from core.adapters.factory import AdapterFactory
+from backend.core.adapters.factory import AdapterFactory
 from .base import BaseExecutor
 from backend.models.asset import Asset
 from backend.db import SessionLocal

@@ -1,16 +1,22 @@
 # backend/core/adapters/factory.py
 from backend.core.registry import ProviderRegistry
+from backend.models.provider import Provider
+from sqlalchemy.orm import Session
 
-# 🌟 核心：为了确保注册装饰器被执行，必须在这里或者 app.py 里 import 一下具体的类
-# 这一步叫“预热激活”
-
-import backend.core.adapters.gemini
-import backend.core.adapters.comfyui
-import backend.core.adapters.qwen
+# 确保引入了万能代理以触发其 @ProviderRegistry.register_adapter 装饰器
+import backend.core.adapters.universal_proxy
 
 
 class AdapterFactory:
     @classmethod
-    def get_adapter(cls, provider: str):
-        # 直接向注册中心要人！
-        return ProviderRegistry.get_adapter(provider)
+    def get_adapter(cls, provider_id: str, db: Session):
+        try:
+            # 尝试获取专属类
+            return ProviderRegistry.get_adapter(provider_id)
+        except ValueError:
+            # 回退到万能类
+            provider_info = db.query(Provider).filter(Provider.id == provider_id).first()
+            if provider_info and provider_info.api_format == "openai_compatible":
+                return ProviderRegistry.get_adapter("universal_openai")
+
+            raise ValueError(f"无法为供应商 [{provider_id}] 找到合适的适配器")
