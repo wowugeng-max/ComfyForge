@@ -10,6 +10,7 @@ const { TextArea } = Input; // 🌟 引入多行文本框支持 JSON
 
 // 🌟 升级：主流大厂预设模板（注入高级 DSL 模板路由能力）
 const PRESET_PROVIDERS = [
+ // 🌟 升级：全配置驱动的大厂预设（引入了 poll_url 解决异步问题）
  {
     label: '阿里云 (千问/万相)',
     color: 'orange',
@@ -22,21 +23,35 @@ const PRESET_PROVIDERS = [
       default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       supported_modalities: ['chat', 'vision', 'text_to_image', 'image_to_image', 'text_to_video', 'image_to_video'],
       is_active: true,
-      // 🌟 Phase 9.5 核心：注入完整的 DSL 动态拼装图纸！
       endpoints: {
+        chat: "/chat/completions",
+        vision: "/chat/completions",
         text_to_image: {
-          "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
-          "payload_template": {
-            "model": "{{model}}",
-            "input": { "prompt": "{{prompt}}", "ref_img": "{{image_url}}" },
-            "parameters": { "size": "{{size}}" }
-          },
-          "task_id_extractor": "output.task_id",
-          "status_extractor": "output.task_status",
-          "result_extractor": "output.results.0.url"
+         "text_to_image": {
+    "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    "payload_template": {
+      "model": "{{model}}",
+      "input": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              { "text": "{{prompt}}" }
+            ]
+          }
+        ]
+      },
+      "parameters": {
+        "size": "{{size}}",
+        "prompt_extend": false
+      }
+    },
+    "result_extractor": "output.choices.0.message.content.0.image"
+  }
         },
         image_to_image: {
           "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+          "poll_url": "https://dashscope.aliyuncs.com/api/v1/tasks/{{task_id}}",
           "payload_template": {
             "model": "{{model}}",
             "input": { "prompt": "{{prompt}}", "ref_img": "{{image_url}}" },
@@ -48,6 +63,7 @@ const PRESET_PROVIDERS = [
         },
         text_to_video: {
           "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          "poll_url": "https://dashscope.aliyuncs.com/api/v1/tasks/{{task_id}}",
           "payload_template": {
             "model": "{{model}}",
             "input": { "prompt": "{{prompt}}" }
@@ -56,6 +72,7 @@ const PRESET_PROVIDERS = [
         },
         image_to_video: {
           "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          "poll_url": "https://dashscope.aliyuncs.com/api/v1/tasks/{{task_id}}",
           "payload_template": {
             "model": "{{model}}",
             "input": { "prompt": "{{prompt}}", "img_url": "{{image_url}}" }
@@ -68,6 +85,7 @@ const PRESET_PROVIDERS = [
       }
     }
   },
+  // ... 其他预设保持不变 ...
   {
     label: '火山引擎 (豆包)',
     color: 'blue',
