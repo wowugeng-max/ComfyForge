@@ -191,7 +191,8 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         }
 
         # 阿里官方 OSS 提供的标准安全测试图
-        OFFICIAL_TEST_IMAGE = "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"
+        # 🌟 替换为公共 CDN，彻底绕过 OSS 防盗链
+        OFFICIAL_TEST_IMAGE = "https://img.alicdn.com/tfs/TB1p.bgQXXXXXbFXFXXXXXXXXXX-500-500.png"
 
         # 🚀 【关键修复】优先级翻转：从简到繁！优先测试纯文本发起的任务。
         # 很多模型同时具备图生图和文生图，优先测试文生图可以避免触发大厂严苛的 URL 校验（如防盗链、OSS跨域等）

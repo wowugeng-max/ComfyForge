@@ -6,8 +6,9 @@ import { providerApi, type ProviderData } from '../../api/providers';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
+const { TextArea } = Input; // 🌟 引入多行文本框支持 JSON
 
-// 🌟 升级：主流大厂预设模板（注入高级路由能力）
+// 🌟 升级：主流大厂预设模板（注入高级 DSL 模板路由能力）
 const PRESET_PROVIDERS = [
  {
     label: '阿里云 (千问/万相)',
@@ -21,12 +22,46 @@ const PRESET_PROVIDERS = [
       default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       supported_modalities: ['chat', 'vision', 'text_to_image', 'image_to_image', 'text_to_video', 'image_to_video'],
       is_active: true,
-      // 🌟 精准匹配 6 大模态的原生网关
+      // 🌟 Phase 9.5 核心：注入完整的 DSL 动态拼装图纸！
       endpoints: {
-        text_to_image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
-        image_to_image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
-        text_to_video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis',
-        image_to_video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
+        text_to_image: {
+          "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+          "payload_template": {
+            "model": "{{model}}",
+            "input": { "prompt": "{{prompt}}", "ref_img": "{{image_url}}" },
+            "parameters": { "size": "{{size}}" }
+          },
+          "task_id_extractor": "output.task_id",
+          "status_extractor": "output.task_status",
+          "result_extractor": "output.results.0.url"
+        },
+        image_to_image: {
+          "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+          "payload_template": {
+            "model": "{{model}}",
+            "input": { "prompt": "{{prompt}}", "ref_img": "{{image_url}}" },
+            "parameters": { "size": "{{size}}" }
+          },
+          "task_id_extractor": "output.task_id",
+          "status_extractor": "output.task_status",
+          "result_extractor": "output.results.0.url"
+        },
+        text_to_video: {
+          "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          "payload_template": {
+            "model": "{{model}}",
+            "input": { "prompt": "{{prompt}}" }
+          },
+          "task_id_extractor": "output.task_id"
+        },
+        image_to_video: {
+          "url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+          "payload_template": {
+            "model": "{{model}}",
+            "input": { "prompt": "{{prompt}}", "img_url": "{{image_url}}" }
+          },
+          "task_id_extractor": "output.task_id"
+        }
       },
       custom_headers: {
         'X-DashScope-Async': 'enable'
@@ -114,13 +149,22 @@ export default function ProviderManager() {
     if (record) {
       setEditingId(record.id);
 
-      // 🌟 数据转换：将后端的对象格式 {"X-Token":"123"} 转换为 Form.List 能用的数组 [{key:"X-Token", value:"123"}]
+      // 🌟 数据转换 1：将后端的对象格式 {"X-Token":"123"} 转换为 Form.List 能用的数组
       const headersObj = record.custom_headers || {};
       const headersList = Object.entries(headersObj).map(([key, value]) => ({ key, value }));
 
+      // 🌟 数据转换 2：将后端的 endpoints JSON 转换为格式化字符串，塞入 TextArea
+      const formattedEndpoints: Record<string, string> = {};
+      if (record.endpoints) {
+        Object.entries(record.endpoints).forEach(([key, val]) => {
+          formattedEndpoints[key] = typeof val === 'object' ? JSON.stringify(val, null, 2) : val;
+        });
+      }
+
       form.setFieldsValue({
         ...record,
-        custom_headers_list: headersList
+        custom_headers_list: headersList,
+        endpoints: formattedEndpoints
       });
     } else {
       setEditingId(null);
@@ -131,7 +175,8 @@ export default function ProviderManager() {
         auth_type: 'Bearer',
         service_type: 'llm',
         supported_modalities: ['text'],
-        custom_headers_list: []
+        custom_headers_list: [],
+        endpoints: {}
       });
     }
     setDrawerOpen(true);
@@ -141,7 +186,7 @@ export default function ProviderManager() {
     try {
       const values = await form.validateFields();
 
-      // 🌟 数据转换：将前端的数组 [{key:"X-Token", value:"123"}] 重新转回后端的对象格式
+      // 🌟 反向转换 1：将前端的数组转回后端的 Header 对象格式
       const headersObj: Record<string, string> = {};
       if (values.custom_headers_list) {
         values.custom_headers_list.forEach((item: any) => {
@@ -151,11 +196,33 @@ export default function ProviderManager() {
         });
       }
 
+      // 🌟 反向转换 2：拦截 TextArea 的字符串，如果是 JSON 就尝试 Parse
+      const parsedEndpoints: Record<string, any> = {};
+      if (values.endpoints) {
+        for (const [key, val] of Object.entries(values.endpoints)) {
+          const strVal = String(val).trim();
+          if (!strVal) continue;
+
+          if (strVal.startsWith('{')) {
+            try {
+              parsedEndpoints[key] = JSON.parse(strVal);
+            } catch (e) {
+              message.error(`[${key}] 路由的 JSON 格式错误，请检查大括号和引号！`);
+              return; // 阻止保存并提示
+            }
+          } else {
+             // 兼容用户只填一个简单 URL 字符串的情况
+             parsedEndpoints[key] = strVal;
+          }
+        }
+      }
+
       const payload = {
         ...values,
-        custom_headers: headersObj
+        custom_headers: headersObj,
+        endpoints: parsedEndpoints
       };
-      // 删除辅助字段
+
       delete payload.custom_headers_list;
 
       if (editingId) {
@@ -168,6 +235,7 @@ export default function ProviderManager() {
       setDrawerOpen(false);
       loadData();
     } catch (e: any) {
+      if (e.errorFields) return;
       message.error(e.response?.data?.detail || '操作失败');
     }
   };
@@ -239,7 +307,7 @@ export default function ProviderManager() {
       <Row gutter={24} style={{ marginBottom: '32px' }}>
         <Col span={18}>
           <Title level={2} style={{ margin: 0, letterSpacing: '-0.5px' }}>厂商中枢 <Text type="secondary" style={{ fontWeight: 400 }}>/ Provider Matrix</Text></Title>
-          <Text type="secondary">通过配置驱动协议，实现全网大模型算力的零代码动态接入与调度。</Text>
+          <Text type="secondary">通过 DSL 模板驱动协议，实现全网复杂大模型算力的零代码动态接入与调度。</Text>
         </Col>
         <Col span={6} style={{ textAlign: 'right', alignSelf: 'center' }}>
           <Button
@@ -280,7 +348,7 @@ export default function ProviderManager() {
 
       <Drawer
         title={<Space><CodeOutlined /> {editingId ? "编辑算力节点" : "接入全新引擎"}</Space>}
-        width={500}
+        width={650} // 🌟 加宽抽屉，完美展示 JSON
         onClose={() => setDrawerOpen(false)}
         open={drawerOpen}
         extra={<Button type="primary" onClick={onSave} icon={<CheckCircleOutlined />}>注入配置</Button>}
@@ -290,7 +358,7 @@ export default function ProviderManager() {
         {!editingId && (
           <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
-              💡 一键填入主流厂商官方网关：
+              💡 一键填入主流厂商官方网关与 DSL 模板：
             </div>
             <Space size={[8, 8]} wrap>
               {PRESET_PROVIDERS.map(preset => (
@@ -299,13 +367,23 @@ export default function ProviderManager() {
                   color={preset.color}
                   style={{ cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}
                   onClick={() => {
-                    // 🌟 核心：预设也需要把 Header 对象转成数组，否则表单无法显示
                     const presetData = { ...preset.data };
+
+                    // 转换预设 Header
                     const headersList = Object.entries(presetData.custom_headers || {}).map(([key, value]) => ({ key, value }));
+
+                    // 转换预设 Endpoints (DSL)
+                    const formattedEndpoints: Record<string, string> = {};
+                    if (presetData.endpoints) {
+                      Object.entries(presetData.endpoints).forEach(([key, val]) => {
+                        formattedEndpoints[key] = typeof val === 'object' ? JSON.stringify(val, null, 2) : val;
+                      });
+                    }
 
                     form.setFieldsValue({
                       ...presetData,
-                      custom_headers_list: headersList
+                      custom_headers_list: headersList,
+                      endpoints: formattedEndpoints
                     });
                     message.info(`已应用 ${preset.label} 预设配置`);
                   }}
@@ -358,29 +436,29 @@ export default function ProviderManager() {
           {/* 🌟 核心跃迁：折叠式极客高级配置面板 */}
           <Collapse ghost expandIconPosition="end" style={{ background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', marginTop: 24, padding: '4px 0' }}>
             <Collapse.Panel
-              header={<Space><SettingOutlined style={{ color: '#64748b' }} /><Text strong style={{ color: '#334155' }}>高级路由覆盖与 Header 注入</Text></Space>}
+              header={<Space><SettingOutlined style={{ color: '#64748b' }} /><Text strong style={{ color: '#334155' }}>高级路由覆盖与 DSL 映射模板</Text></Space>}
               key="1"
             >
               <div style={{ marginBottom: 24 }}>
-                <Text strong style={{ fontSize: 13, color: '#475569' }}>端点路由重写 (Endpoint Overrides)</Text>
-                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>精确到模态级的路由接管。</div>
+                <Text strong style={{ fontSize: 13, color: '#475569' }}>模态级方言映射 (DSL Overrides)</Text>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>支持直接填入 URL 或填入完整的 JSON DSL 映射模板以支持原生 API 渲染。</div>
                 <Form.Item name={['endpoints', 'chat']} label="对话端点 (chat)">
-                  <Input placeholder="/chat/completions" />
+                  <TextArea rows={2} placeholder="/chat/completions" style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
                 <Form.Item name={['endpoints', 'vision']} label="视觉端点 (vision)">
-                  <Input placeholder="/chat/completions" />
+                  <TextArea rows={2} placeholder="/chat/completions" style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
                 <Form.Item name={['endpoints', 'text_to_image']} label="文生图端点 (text_to_image)">
-                  <Input placeholder="/images/generations" />
+                  <TextArea rows={6} placeholder={`{\n  "url": "...",\n  "payload_template": {...}\n}`} style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
                 <Form.Item name={['endpoints', 'image_to_image']} label="图生图端点 (image_to_image)">
-                  <Input placeholder="/images/generations" />
+                  <TextArea rows={6} placeholder={`{\n  "url": "...",\n  "payload_template": {...}\n}`} style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
                 <Form.Item name={['endpoints', 'text_to_video']} label="文生视频端点 (text_to_video)">
-                  <Input placeholder="/videos/generations" />
+                  <TextArea rows={6} placeholder={`{\n  "url": "...",\n  "payload_template": {...}\n}`} style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
                 <Form.Item name={['endpoints', 'image_to_video']} label="图生视频端点 (image_to_video)">
-                  <Input placeholder="/videos/generations" />
+                  <TextArea rows={6} placeholder={`{\n  "url": "...",\n  "payload_template": {...}\n}`} style={{ fontFamily: 'monospace', fontSize: 13, backgroundColor: '#fff' }} />
                 </Form.Item>
               </div>
 

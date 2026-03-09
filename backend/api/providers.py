@@ -21,8 +21,8 @@ class ProviderBase(BaseModel):
     default_base_url: Optional[str] = None
     is_active: bool = True
 
-    # 🌟 2. 核心修复：在这里加上这两个高级字段，FastAPI 才会放行它们！
-    endpoints: Optional[Dict[str, str]] = {}
+    # 🌟 核心修复：把 Dict[str, str] 改成 Dict[str, Any]
+    endpoints: Optional[Dict[str, Any]] = {}
     custom_headers: Optional[Dict[str, str]] = {}
 
 

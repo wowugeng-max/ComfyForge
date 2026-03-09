@@ -1,7 +1,7 @@
 # backend/core/adapters/universal_proxy.py
 import httpx
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from .base import BaseAdapter
 from backend.core.registry import ProviderRegistry
 from backend.models.provider import Provider
@@ -11,9 +11,8 @@ from backend.models.api_key import APIKey
 @ProviderRegistry.register_adapter("universal_openai")
 class UniversalProxyAdapter(BaseAdapter):
     """
-    万能大模型适配器 (Config-Driven)
-    全面支持：文本生成、视觉识图、图片生成、异步视频生成 (自动轮询等待)
-    🔥 真正实现了配置驱动路由，告别硬编码补丁！
+    万能大模型适配器 (DSL Protocol-Driven)
+    🔥 Phase 9.5 终极进化：基于模板渲染的配置驱动引擎！彻底消灭硬编码！
     """
 
     def __init__(self, provider: Provider, api_key: APIKey = None):
@@ -37,21 +36,24 @@ class UniversalProxyAdapter(BaseAdapter):
             elif auth_type == "x-api-key":
                 headers["x-api-key"] = self.api_key.key
 
-        # 🌟 2. 终极灵活性：无脑合并用户在界面的自定义 Header！(如 X-DashScope-Async 等)
+        # 🌟 2. 终极灵活性：无脑合并用户在界面的自定义 Header
         if self.provider.custom_headers:
             headers.update(self.provider.custom_headers)
 
         return headers
 
-    def _get_endpoint(self, req_type: str) -> str:
-        """🌟 核心跃迁：基于高级配置动态计算端点"""
-        # 1. 优先读取并应用 UI 上的自定义路由覆盖
+    def _get_route_config(self, req_type: str) -> Union[str, Dict[str, Any]]:
+        """🌟 核心跃迁：获取当前模态的路由配置 (支持旧版字符串和新版 DSL 对象)"""
         if self.provider.endpoints and self.provider.endpoints.get(req_type):
-            custom_ep = self.provider.endpoints[req_type]
-            # 如果是 http 开头的绝对路径，直接使用；否则拼接 base_url
-            return custom_ep if custom_ep.startswith("http") else f"{self.base_url}{custom_ep}"
+            return self.provider.endpoints[req_type]
 
-        # 2. 没有覆盖时，走默认的 OpenAI 标准后缀 (支持 6 大模态分类与旧版兼容)
+        # 向下兼容降级：如果界面上只配了粗犷的 "image" 或 "video"
+        if self.provider.endpoints:
+            fallback_type = "image" if "image" in req_type else ("video" if "video" in req_type else None)
+            if fallback_type and self.provider.endpoints.get(fallback_type):
+                return self.provider.endpoints[fallback_type]
+
+        # 默认标准端点
         default_paths = {
             "chat": "/chat/completions",
             "vision": "/chat/completions",
@@ -62,31 +64,52 @@ class UniversalProxyAdapter(BaseAdapter):
             "image": "/images/generations",
             "video": "/videos/generations"
         }
-        return f"{self.base_url}{default_paths.get(req_type, '/chat/completions')}"
+        return default_paths.get(req_type, "/chat/completions")
 
-    def _build_payload(self, request_params: Dict[str, Any], req_type: str, endpoint: str) -> Dict[str, Any]:
-        """根据端点特征和模态，组装最终 Payload"""
+    def _render_template(self, template: Any, params: Dict[str, Any]) -> Any:
+        """🚀 极轻量级递归模板渲染器"""
+        if isinstance(template, dict):
+            rendered = {}
+            for k, v in template.items():
+                val = self._render_template(v, params)
+                # 如果参数值为 None（如未传图片），自动裁减掉这个键，避免大厂校验报错
+                if val is not None:
+                    rendered[k] = val
+            return rendered
+        elif isinstance(template, list):
+            return [self._render_template(item, params) for item in template if
+                    self._render_template(item, params) is not None]
+        elif isinstance(template, str) and template.startswith("{{") and template.endswith("}}"):
+            key = template[2:-2].strip()
+            val = params.get(key)
+            if key == "size" and val:
+                return val.replace("x", "*")  # 尺寸兼容符转换
+            return val
+        return template
+
+    def _build_payload(self, request_params: Dict[str, Any], req_type: str, route_config: Union[str, Dict[str, Any]]) -> \
+    Dict[str, Any]:
+        """根据 DSL 模板或标准特征，组装最终 Payload"""
+        # 1. 🌟 如果配置了高级 DSL 模板，彻底交由模板引擎渲染
+        if isinstance(route_config, dict) and "payload_template" in route_config:
+            context = {
+                "model": request_params.get("model"),
+                "prompt": request_params.get("prompt", ""),
+                "image_url": request_params.get("image_url"),
+                "size": request_params.get("size", "1024x1024"),
+                "messages": request_params.get("messages")
+            }
+            return self._render_template(route_config["payload_template"], context)
+
+        # 2. 兜底：标准 OpenAI 格式组装
         model_name = request_params.get("model")
         payload = {"model": model_name}
+        is_image_or_video = req_type in ["text_to_image", "image_to_image", "text_to_video", "image_to_video", "image",
+                                         "video"]
 
-        # 提取模态归属
-        is_image = req_type in ["image", "text_to_image", "image_to_image"]
-        is_video = req_type in ["video", "text_to_video", "image_to_video"]
-
-        # 🌟 智能方言推断：通过判断端点 URL，自动转换为原生格式 (比如阿里视频的特殊结构)
-        if "dashscope.aliyuncs.com/api/v1/services" in endpoint:
-            payload["input"] = {"prompt": request_params.get("prompt", "")}
-            payload["parameters"] = {}
-            if "image_url" in request_params:
-                payload["input"]["img_url"] = request_params["image_url"]
-            if is_image:
-                payload["parameters"]["size"] = request_params.get("size", "1024*1024").replace("x", "*")
-            return payload
-
-        # 标准 OpenAI 格式组装
-        if is_image or is_video:
+        if is_image_or_video:
             payload["prompt"] = request_params.get("prompt", "")
-            if "size" in request_params and is_image:
+            if "size" in request_params:
                 payload["size"] = request_params["size"]
             if "image_url" in request_params:
                 payload["image_url"] = request_params["image_url"]
@@ -98,51 +121,73 @@ class UniversalProxyAdapter(BaseAdapter):
 
         return payload
 
+    def _extract_value_by_path(self, data: Dict[str, Any], path: str) -> Any:
+        """基于点表示法(如 output.task_id)提取字典中的值"""
+        keys = path.split('.')
+        val = data
+        for key in keys:
+            if isinstance(val, dict) and key in val:
+                val = val[key]
+            elif isinstance(val, list) and key.isdigit() and int(key) < len(val):
+                val = val[int(key)]
+            else:
+                return None
+        return val
+
     async def generate(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
         if not self.base_url:
             return {"success": False, "error": f"Provider [{self.provider.id}] 没有配置基础网关"}
 
         req_type = request_params.get("type", "text")
-        endpoint = self._get_endpoint(req_type)
+        route_config = self._get_route_config(req_type)
         headers = self._build_headers()
-        payload = self._build_payload(request_params, req_type, endpoint)
 
-        # 提取当前请求是否为图像或视频生成任务
+        # 解析端点 URL
+        endpoint_suffix = route_config.get("url", "") if isinstance(route_config, dict) else route_config
+        endpoint = endpoint_suffix if endpoint_suffix.startswith("http") else f"{self.base_url}{endpoint_suffix}"
+
+        payload = self._build_payload(request_params, req_type, route_config)
         is_image_or_video = req_type in ["image", "video", "text_to_image", "image_to_image", "text_to_video",
                                          "image_to_video"]
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                # ================= 1. 提交初始请求 =================
                 response = await client.post(endpoint, headers=headers, json=payload)
 
-                # 🌟 终极容错降级：如果非原生路由报 404 (说明中转站魔改了画图接口到聊天里)
+                # 🌟 终极容错降级：如果非原生路由报 404
                 if response.status_code == 404 and is_image_or_video and "dashscope" not in endpoint:
-                    fallback_endpoint = self._get_endpoint("chat")
+                    fallback_config = self._get_route_config("chat")
+                    fallback_suffix = fallback_config.get("url", "") if isinstance(fallback_config,
+                                                                                   dict) else fallback_config
+                    fallback_ep = fallback_suffix if fallback_suffix.startswith(
+                        "http") else f"{self.base_url}{fallback_suffix}"
+
                     fallback_payload = {
                         "model": payload.get("model"),
                         "messages": [{"role": "user", "content": request_params.get("prompt", "Please generate")}],
                     }
-                    response = await client.post(fallback_endpoint, headers=headers, json=fallback_payload)
+                    response = await client.post(fallback_ep, headers=headers, json=fallback_payload)
+                    endpoint = fallback_ep  # 更新供异常报错用
 
                 response.raise_for_status()
                 data = response.json()
 
-                # ================= 2. 自动嗅探异步轮询 =================
-                # 兼容标准和原生嵌套的 task_id
-                task_id = data.get("task_id") or data.get("id")
-                if "output" in data and "task_id" in data["output"]:
-                    task_id = data["output"]["task_id"]
+                # ================= 动态结果解析与轮询 =================
+                task_id = None
+                status = None
 
-                status = str(data.get("status") or data.get("task_status") or (
-                    data.get("output", {}).get("task_status", ""))).lower()
+                # 若配置了 DSL 提取器
+                if isinstance(route_config, dict) and "task_id_extractor" in route_config:
+                    task_id = self._extract_value_by_path(data, route_config["task_id_extractor"])
+                    status = str(self._extract_value_by_path(data, route_config.get("status_extractor",
+                                                                                    "output.task_status"))).lower()
+                else:
+                    task_id = data.get("task_id") or data.get("id") or (data.get("output") or {}).get("task_id")
+                    status = str(data.get("status") or data.get("task_status") or (
+                        data.get("output", {}).get("task_status", ""))).lower()
 
                 if task_id and status in ["pending", "processing", "submitted", "in_progress", "queued"]:
-                    # 动态推算轮询端点
-                    if "dashscope.aliyuncs.com/api/v1/services" in endpoint:
-                        poll_endpoint = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
-                    else:
-                        poll_endpoint = f"{endpoint}/{task_id}"
+                    poll_endpoint = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}" if "dashscope" in endpoint else f"{endpoint}/{task_id}"
 
                     max_attempts = 60
                     for attempt in range(max_attempts):
@@ -151,8 +196,12 @@ class UniversalProxyAdapter(BaseAdapter):
                         poll_resp.raise_for_status()
                         poll_data = poll_resp.json()
 
-                        current_status = str(poll_data.get("status") or poll_data.get("task_status") or (
-                            poll_data.get("output", {}).get("task_status", ""))).lower()
+                        if isinstance(route_config, dict) and "status_extractor" in route_config:
+                            current_status = str(
+                                self._extract_value_by_path(poll_data, route_config["status_extractor"])).lower()
+                        else:
+                            current_status = str(poll_data.get("status") or poll_data.get("task_status") or (
+                                poll_data.get("output", {}).get("task_status", ""))).lower()
 
                         if current_status in ["succeeded", "success", "completed"]:
                             data = poll_data
@@ -163,8 +212,11 @@ class UniversalProxyAdapter(BaseAdapter):
                     else:
                         return {"success": False, "error": f"任务超时 (超过10分钟未出结果): {task_id}"}
 
-                # ================= 3. 结果统一清洗 =================
-                if is_image_or_video:
+                # ================= 提取最终内容 =================
+                content = str(data)
+                if isinstance(route_config, dict) and "result_extractor" in route_config:
+                    content = self._extract_value_by_path(data, route_config["result_extractor"])
+                elif is_image_or_video:
                     if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
                         content = data["data"][0].get("url") or data["data"][0].get("b64_json")
                     elif "output" in data:
@@ -176,12 +228,11 @@ class UniversalProxyAdapter(BaseAdapter):
                                 "output"].get("image_url")
                     elif "video_result" in data:
                         content = data["video_result"][0].get("url")
-                    elif "choices" in data:  # 兼容从聊天接口截获的图片链接
+                    elif "choices" in data:
                         content = data["choices"][0]["message"]["content"]
-                    else:
-                        content = str(data)
                 else:
-                    content = data["choices"][0]["message"]["content"]
+                    if "choices" in data:
+                        content = data["choices"][0]["message"]["content"]
 
                 return {
                     "success": True,
@@ -190,7 +241,6 @@ class UniversalProxyAdapter(BaseAdapter):
                     "raw_response": data
                 }
             except httpx.HTTPStatusError as e:
-                # 🌟 核心跃迁：把报错时试图访问的 endpoint 完整打印出来，瞬间定位路由问题！
                 return {"success": False,
                         "error": f"HTTP {e.response.status_code} 拒绝访问网关 [{endpoint}]: {e.response.text}"}
             except Exception as e:
