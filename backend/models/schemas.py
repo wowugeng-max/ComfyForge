@@ -176,6 +176,10 @@ class ProviderBase(BaseModel):
     is_active: bool = True
     icon: Optional[str] = None
 
+    # 🌟 新增：高级路由覆盖与自定义请求头
+    endpoints: Optional[Dict[str, str]] = Field(default_factory=dict)
+    custom_headers: Optional[Dict[str, str]] = Field(default_factory=dict)
+
 
 class ProviderCreate(ProviderBase):
     pass
@@ -190,6 +194,9 @@ class ProviderUpdate(BaseModel):
     default_base_url: Optional[str] = None
     is_active: Optional[bool] = None
     icon: Optional[str] = None
+    # 🌟 新增：允许更新高级配置
+    endpoints: Optional[Dict[str, str]] = None
+    custom_headers: Optional[Dict[str, str]] = None
 
 
 class ProviderOut(ProviderBase):

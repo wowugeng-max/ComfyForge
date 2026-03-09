@@ -154,6 +154,10 @@ def delete_model(model_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": "模型已删除"}
 
 
+# backend/api/models.py
+
+# backend/api/models.py
+
 @router.post("/{model_id:int}/test")
 async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     """对单个模型进行连通性探针测试，并更新其健康档案"""
@@ -161,25 +165,23 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
 
-    # 1. 获取对应的 API Key 记录
     key_record = db.query(APIKey).filter(APIKey.id == db_model.api_key_id).first()
     if not key_record or not key_record.is_active:
         db_model.health_status = "error"
         db.commit()
         raise HTTPException(status_code=400, detail="绑定的 API Key 无效或未启用")
 
-    # 2. 获取该模型所属的 Provider 完整配置记录
     from ..models.provider import Provider
     provider_record = db.query(Provider).filter(Provider.id == db_model.provider).first()
     if not provider_record:
-        raise HTTPException(status_code=400, detail=f"数据库中未找到供应商 [{db_model.provider}] 的运行配置")
+        raise HTTPException(status_code=400, detail=f"数据库中未找到供应商配置")
 
     try:
         from ..core.adapters.factory import AdapterFactory
         adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 3. 多模态自适应探针 (带名字嗅探)
+        # 1. 模态识别
         probe_type = "text"
         if db_model.capabilities:
             if db_model.capabilities.get("image"):
@@ -194,56 +196,57 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
             elif any(k in model_name_lower for k in ["video", "sora", "kling", "wan", "veo", "runway"]):
                 probe_type = "video"
 
+        # 2. 组装最严谨的真实验证参数
         probe_params = {
             "model": db_model.model_name,
             "type": probe_type
         }
 
+        # 🌟 修复：使用阿里官方 OSS 提供的标准测试图，确保真正有权限的账号能 100% 跑通
+        OFFICIAL_TEST_IMAGE = "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"
+
         if probe_type == "image":
             probe_params["prompt"] = "A simple white circle on a black background, minimal design."
             probe_params["size"] = "1024x1024"
+            probe_params["image_url"] = OFFICIAL_TEST_IMAGE
         elif probe_type == "video":
             probe_params["prompt"] = "A simple white cloud moving slowly."
+            probe_params["image_url"] = OFFICIAL_TEST_IMAGE
         else:
             probe_params["prompt"] = "Hello! Could you please acknowledge this test message?"
             probe_params["max_tokens"] = 20
             probe_params["temperature"] = 0.1
 
-        # 4. 执行生成测试
+        # 3. 执行端到端真实生成
         result = await adapter.generate(probe_params)
 
-        # 5. 🌟 终极智能状态判定
+        # 4. 🌟 恢复严苛判断：必须真正生成/提交任务成功，才算测试通过！
         if isinstance(result, dict) and result.get("success"):
             db_model.health_status = "healthy"
-            status_msg = "测试通过：模型运行健康！"
+            status_msg = "测试通过：此 Key 可正常调用该模型！"
         else:
             error_msg = str(result.get("error", "")).lower()
-
-            # 【核心破局点】：如果返回 HTTP 400 Bad Request，说明网关通了、Key对了，只是探针的默认参数被模型拒绝了。这其实是测试成功的标志！
-            if "http error 400" in error_msg or "invalidparameter" in error_msg or "url error" in error_msg:
-                db_model.health_status = "healthy"
-                status_msg = "测试通过：节点已连通！(此模型参数校验严格，请在画布中输入正确参数使用)"
-            elif "429" in error_msg or "quota" in error_msg:
+            if "429" in error_msg or "quota" in error_msg:
                 db_model.health_status = "quota_exhausted"
-                status_msg = "测试失败：额度已耗尽或频率受限。"
-            elif "403" in error_msg or "unauthorized" in error_msg or "401" in error_msg:
+                status_msg = "测试失败：额度耗尽或并发超限"
+            elif "403" in error_msg or "unauthorized" in error_msg or "401" in error_msg or "no permission" in error_msg:
                 db_model.health_status = "unauthorized"
-                status_msg = "测试失败：API Key 鉴权失败。"
+                status_msg = "测试失败：当前 Key 无权限使用该模型"
             else:
                 db_model.health_status = "error"
-                status_msg = f"测试失败：{result.get('error', '未知错误')}"
+                status_msg = f"调用失败 (不可用)：{result.get('error', '未知错误')}"
 
     except Exception as e:
         error_str = str(e).lower()
         if "429" in error_str or "quota" in error_str:
             db_model.health_status = "quota_exhausted"
-            status_msg = "测试失败：额度已耗尽或频率受限。"
+            status_msg = "测试失败：额度耗尽或并发超限"
         elif "403" in error_str or "unauthorized" in error_str or "401" in error_str:
             db_model.health_status = "unauthorized"
-            status_msg = "测试失败：API Key 鉴权失败。"
+            status_msg = "测试失败：当前 Key 无权限使用该模型"
         else:
             db_model.health_status = "error"
-            status_msg = f"测试失败：{str(e)}"
+            status_msg = f"调用失败 (不可用)：{str(e)}"
 
     db_model.last_tested_at = datetime.utcnow()
     db.commit()

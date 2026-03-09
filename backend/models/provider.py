@@ -19,3 +19,7 @@ class Provider(Base):
     default_base_url = Column(String, nullable=True)  # 官方默认地址 (选填)
     is_active = Column(Boolean, default=True)
     icon = Column(String, nullable=True)  # 预留给前端展示小图标用
+
+    # ================= 🌟 架构升级：新增高级路由与自定义头 =================
+    endpoints = Column(JSON, default={}, nullable=True)  # 例如: {"chat": "/v1/chat/completions", "image": "..."}
+    custom_headers = Column(JSON, default={}, nullable=True)  # 例如: {"X-DashScope-Async": "enable"}

@@ -1,15 +1,16 @@
+// frontend-react/src/pages/Providers/index.tsx
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Drawer, Form, Input, Select, Switch, Space, Tag, message, Card, Typography, Tooltip, Popconfirm, Badge, Divider, Row, Col, Statistic } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, GlobalOutlined, CodeOutlined, ThunderboltOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Table, Button, Drawer, Form, Input, Select, Switch, Space, Tag, message, Card, Typography, Tooltip, Popconfirm, Badge, Divider, Row, Col, Statistic, Collapse } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, GlobalOutlined, CodeOutlined, ThunderboltOutlined, CheckCircleOutlined, MinusCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { providerApi, type ProviderData } from '../../api/providers';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
 
-// 🌟 新增：主流大厂预设模板
+// 🌟 升级：主流大厂预设模板（注入高级路由能力）
 const PRESET_PROVIDERS = [
   {
-    label: '阿里云 (千问)',
+    label: '阿里云 (千问/万相)',
     color: 'orange',
     data: {
       id: 'aliyun_dashscope',
@@ -19,7 +20,16 @@ const PRESET_PROVIDERS = [
       service_type: 'llm',
       default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       supported_modalities: ['text', 'vision', 'image', 'video'],
-      is_active: true
+      is_active: true,
+      // 🌟 极客配置：文本和生图走上面的兼容模式网关，唯独生视频强制覆盖为原生网关！
+      endpoints: {
+        image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
+        video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
+      },
+      // 🌟 极客配置：原生异步视频接口必须带的头
+      custom_headers: {
+        'X-DashScope-Async': 'enable'
+      }
     }
   },
   {
@@ -70,7 +80,7 @@ const PRESET_PROVIDERS = [
     data: {
       id: 'google_gemini',
       display_name: 'Google Gemini (API)',
-      api_format: 'openai_compatible', // Gemini 现在也支持 OpenAI 兼容格式
+      api_format: 'openai_compatible',
       auth_type: 'Bearer',
       service_type: 'llm',
       default_base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -100,19 +110,27 @@ export default function ProviderManager() {
   useEffect(() => { loadData(); }, []);
 
   const onEdit = (record?: ProviderData) => {
-   if (record) {
+    if (record) {
       setEditingId(record.id);
-      form.setFieldsValue(record);
+
+      // 🌟 数据转换：将后端的对象格式 {"X-Token":"123"} 转换为 Form.List 能用的数组 [{key:"X-Token", value:"123"}]
+      const headersObj = record.custom_headers || {};
+      const headersList = Object.entries(headersObj).map(([key, value]) => ({ key, value }));
+
+      form.setFieldsValue({
+        ...record,
+        custom_headers_list: headersList
+      });
     } else {
       setEditingId(null);
       form.resetFields();
-      // 🌟 确保这里补全了后端要求的必填项
       form.setFieldsValue({
         is_active: true,
         api_format: 'openai_compatible',
-        auth_type: 'Bearer',    // 👈 必填：鉴权方式
-        service_type: 'llm',    // 👈 必填：服务大类
-        supported_modalities: ['text']
+        auth_type: 'Bearer',
+        service_type: 'llm',
+        supported_modalities: ['text'],
+        custom_headers_list: []
       });
     }
     setDrawerOpen(true);
@@ -121,16 +139,36 @@ export default function ProviderManager() {
   const onSave = async () => {
     try {
       const values = await form.validateFields();
+
+      // 🌟 数据转换：将前端的数组 [{key:"X-Token", value:"123"}] 重新转回后端的对象格式
+      const headersObj: Record<string, string> = {};
+      if (values.custom_headers_list) {
+        values.custom_headers_list.forEach((item: any) => {
+          if (item && item.key && item.value) {
+            headersObj[item.key] = item.value;
+          }
+        });
+      }
+
+      const payload = {
+        ...values,
+        custom_headers: headersObj
+      };
+      // 删除辅助字段
+      delete payload.custom_headers_list;
+
       if (editingId) {
-        await providerApi.update(editingId, values);
+        await providerApi.update(editingId, payload);
         message.success('算力节点已重构');
       } else {
-        await providerApi.create(values);
+        await providerApi.create(payload);
         message.success('新厂商成功注入大动脉');
       }
       setDrawerOpen(false);
       loadData();
-    } catch (e: any) { message.error(e.response?.data?.detail || '操作失败'); }
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '操作失败');
+    }
   };
 
   const columns = [
@@ -190,7 +228,6 @@ export default function ProviderManager() {
 
   return (
     <div style={{ padding: '24px 32px' }}>
-      {/* 🌟 顶部极客看板区 */}
       <Row gutter={24} style={{ marginBottom: '32px' }}>
         <Col span={18}>
           <Title level={2} style={{ margin: 0, letterSpacing: '-0.5px' }}>厂商中枢 <Text type="secondary" style={{ fontWeight: 400 }}>/ Provider Matrix</Text></Title>
@@ -222,7 +259,6 @@ export default function ProviderManager() {
         </Col>
       </Row>
 
-      {/* 🌟 主表格区 */}
       <Card bordered={false} style={{ borderRadius: '16px', boxShadow: '0 2px 16px rgba(0,0,0,0.03)' }} bodyStyle={{ padding: '0' }}>
         <Table
           dataSource={providers}
@@ -234,17 +270,15 @@ export default function ProviderManager() {
         />
       </Card>
 
-      {/* 🌟 右侧属性检查器 (Drawer) */}
       <Drawer
         title={<Space><CodeOutlined /> {editingId ? "编辑算力节点" : "接入全新引擎"}</Space>}
-        width={440}
+        width={500}
         onClose={() => setDrawerOpen(false)}
         open={drawerOpen}
         extra={<Button type="primary" onClick={onSave} icon={<CheckCircleOutlined />}>注入配置</Button>}
         headerStyle={{ borderBottom: '1px solid #f0f0f0' }}
         bodyStyle={{ padding: '24px' }}
       >
-          {/* 🌟 新增：快速预设填充区 (仅在新建时显示) */}
         {!editingId && (
           <div style={{ marginBottom: 24, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, border: '1px dashed #cbd5e1' }}>
             <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
@@ -257,7 +291,14 @@ export default function ProviderManager() {
                   color={preset.color}
                   style={{ cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}
                   onClick={() => {
-                    form.setFieldsValue(preset.data);
+                    // 🌟 核心：预设也需要把 Header 对象转成数组，否则表单无法显示
+                    const presetData = { ...preset.data };
+                    const headersList = Object.entries(presetData.custom_headers || {}).map(([key, value]) => ({ key, value }));
+
+                    form.setFieldsValue({
+                      ...presetData,
+                      custom_headers_list: headersList
+                    });
                     message.info(`已应用 ${preset.label} 预设配置`);
                   }}
                 >
@@ -279,7 +320,7 @@ export default function ProviderManager() {
 
           <Divider style={{ margin: '24px 0' }} />
 
-          <Title level={5} style={{ marginBottom: 16 }}>协议与网关</Title>
+          <Title level={5} style={{ marginBottom: 16 }}>协议与全局网关</Title>
           <Form.Item name="api_format" label="通信协议规范">
             <Select style={{ width: '100%' }}>
               <Option value="openai_compatible">OpenAI 标准兼容 (V1)</Option>
@@ -287,14 +328,13 @@ export default function ProviderManager() {
             </Select>
           </Form.Item>
           <Form.Item name="default_base_url" label="官方 API 网关 (Base URL)">
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-  💡 提示：自定义中转站通常需要包含路径，如 https://api.proxy.com/v1
-</Text>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              💡 提示：所有未配置高级路由的请求，默认拼接此地址。
+            </Text>
             <Input prefix={<GlobalOutlined />} placeholder="https://..." style={{ borderRadius: '6px' }} />
           </Form.Item>
 
           <Divider style={{ margin: '24px 0' }} />
-
           <Title level={5} style={{ marginBottom: 16 }}>模态与开关</Title>
           <Form.Item name="supported_modalities" label="支持的生成能力" rules={[{ required: true }]}>
             <Select mode="multiple" placeholder="请选择模态" style={{ width: '100%' }}>
@@ -304,7 +344,65 @@ export default function ProviderManager() {
               <Option value="video">VIDEO (视频生成)</Option>
             </Select>
           </Form.Item>
-          <Form.Item name="is_active" label="当前节点状态" valuePropName="checked">
+
+          {/* 🌟 核心跃迁：折叠式极客高级配置面板 */}
+          <Collapse ghost expandIconPosition="end" style={{ background: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', marginTop: 24, padding: '4px 0' }}>
+            <Collapse.Panel
+              header={<Space><SettingOutlined style={{ color: '#64748b' }} /><Text strong style={{ color: '#334155' }}>高级路由覆盖与 Header 注入</Text></Space>}
+              key="1"
+            >
+              <div style={{ marginBottom: 24 }}>
+                <Text strong style={{ fontSize: 13, color: '#475569' }}>端点路由重写 (Endpoint Overrides)</Text>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>如果填写以 http 开头的完整 URL，则该模态将强行忽略上面的全局网关。</div>
+                <Form.Item name={['endpoints', 'chat']} label="文本端点后缀 (默认: /chat/completions)">
+                  <Input placeholder="/chat/completions" />
+                </Form.Item>
+                <Form.Item name={['endpoints', 'image']} label="生图端点后缀 (默认: /images/generations)">
+                  <Input placeholder="/images/generations" />
+                </Form.Item>
+                <Form.Item name={['endpoints', 'video']} label="视频端点后缀 (默认: /videos/generations)">
+                  <Input placeholder="/videos/generations" />
+                </Form.Item>
+              </div>
+
+              <div>
+                <Text strong style={{ fontSize: 13, color: '#475569' }}>自定义请求头 (Custom Headers)</Text>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>强制附加在每次请求中的特殊鉴权或参数标识。</div>
+                <Form.List name="custom_headers_list">
+                  {(fields, { add, remove }) => (
+                    <>
+                      {fields.map(({ key, name, ...restField }) => (
+                        <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'key']}
+                            rules={[{ required: true, message: '缺失 Key' }]}
+                          >
+                            <Input placeholder="Header Key" style={{ width: 140 }} />
+                          </Form.Item>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'value']}
+                            rules={[{ required: true, message: '缺失 Value' }]}
+                          >
+                            <Input placeholder="Header Value" style={{ width: 220 }} />
+                          </Form.Item>
+                          <MinusCircleOutlined onClick={() => remove(name)} style={{ color: '#ff4d4f', cursor: 'pointer', fontSize: 16 }} />
+                        </Space>
+                      ))}
+                      <Form.Item style={{ marginTop: 12 }}>
+                        <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                          新增一条 Header 规则
+                        </Button>
+                      </Form.Item>
+                    </>
+                  )}
+                </Form.List>
+              </div>
+            </Collapse.Panel>
+          </Collapse>
+
+          <Form.Item name="is_active" label="当前节点状态" valuePropName="checked" style={{ marginTop: 24 }}>
             <Switch checkedChildren="已激活" unCheckedChildren="已休眠" />
           </Form.Item>
         </Form>
