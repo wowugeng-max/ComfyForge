@@ -186,7 +186,6 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         # 🌟 核心跃迁：完全信任能力矩阵标签，绝不瞎猜名字！
         caps = db_model.capabilities or {}
 
-        probe_type = "text"
         probe_params = {
             "model": db_model.model_name
         }
@@ -194,35 +193,41 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         # 阿里官方 OSS 提供的标准安全测试图
         OFFICIAL_TEST_IMAGE = "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"
 
-        # 🚀 按照任务的复杂程度，从高到低进行降级匹配
-        if caps.get("image_to_video"):
-            probe_type = "video"
-            probe_params.update({
-                "prompt": "A simple white cloud moving slowly.",
-                "image_url": OFFICIAL_TEST_IMAGE  # 图生视频：强制发图
-            })
-        elif caps.get("text_to_video"):
-            probe_type = "video"
+        # 🚀 【关键修复】优先级翻转：从简到繁！优先测试纯文本发起的任务。
+        # 很多模型同时具备图生图和文生图，优先测试文生图可以避免触发大厂严苛的 URL 校验（如防盗链、OSS跨域等）
+        if caps.get("text_to_video"):
+            probe_type = "text_to_video"
             probe_params.update({
                 "prompt": "A simple white cloud moving slowly."
-                # 文生视频：绝对不发图，避免 url error
             })
-        elif caps.get("image_to_image"):
-            probe_type = "image"
+        elif caps.get("image_to_video"):
+            probe_type = "image_to_video"
             probe_params.update({
-                "prompt": "A simple white circle on a black background.",
-                "size": "1024x1024",
-                "image_url": OFFICIAL_TEST_IMAGE  # 图生图：强制发图
+                "prompt": "A simple white cloud moving slowly.",
+                "image_url": OFFICIAL_TEST_IMAGE
             })
         elif caps.get("text_to_image"):
-            probe_type = "image"
+            probe_type = "text_to_image"
             probe_params.update({
                 "prompt": "A simple white circle on a black background, minimal design.",
                 "size": "1024x1024"
-                # 文生图：绝对不发图，避免 url error
+            })
+        elif caps.get("image_to_image"):
+            probe_type = "image_to_image"
+            probe_params.update({
+                "prompt": "A simple white circle on a black background.",
+                "size": "1024x1024",
+                "image_url": OFFICIAL_TEST_IMAGE
+            })
+        elif caps.get("chat"):
+            probe_type = "chat"
+            probe_params.update({
+                "prompt": "Hello! Could you please acknowledge this test message?",
+                "max_tokens": 20,
+                "temperature": 0.1
             })
         elif caps.get("vision"):
-            probe_type = "text"
+            probe_type = "vision"
             probe_params.update({
                 "messages": [
                     {
@@ -236,14 +241,15 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
                 "max_tokens": 20
             })
         else:
-            # 兜底：纯文本对话 (Chat)
-            probe_type = "text"
+            # 兜底：如果都没选，默认发文本测试
+            probe_type = "chat"
             probe_params.update({
                 "prompt": "Hello! Could you please acknowledge this test message?",
                 "max_tokens": 20,
                 "temperature": 0.1
             })
 
+        # 【关键修复】确保传入代理引擎的 type 是精确的 6 大模态，而不是模糊的 "image"
         probe_params["type"] = probe_type
 
         # 执行端到端真实生成

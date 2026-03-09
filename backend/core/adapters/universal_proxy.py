@@ -51,9 +51,14 @@ class UniversalProxyAdapter(BaseAdapter):
             # 如果是 http 开头的绝对路径，直接使用；否则拼接 base_url
             return custom_ep if custom_ep.startswith("http") else f"{self.base_url}{custom_ep}"
 
-        # 2. 没有覆盖时，走默认的 OpenAI 标准后缀
+        # 2. 没有覆盖时，走默认的 OpenAI 标准后缀 (支持 6 大模态分类与旧版兼容)
         default_paths = {
             "chat": "/chat/completions",
+            "vision": "/chat/completions",
+            "text_to_image": "/images/generations",
+            "image_to_image": "/images/generations",
+            "text_to_video": "/videos/generations",
+            "image_to_video": "/videos/generations",
             "image": "/images/generations",
             "video": "/videos/generations"
         }
@@ -64,20 +69,24 @@ class UniversalProxyAdapter(BaseAdapter):
         model_name = request_params.get("model")
         payload = {"model": model_name}
 
+        # 提取模态归属
+        is_image = req_type in ["image", "text_to_image", "image_to_image"]
+        is_video = req_type in ["video", "text_to_video", "image_to_video"]
+
         # 🌟 智能方言推断：通过判断端点 URL，自动转换为原生格式 (比如阿里视频的特殊结构)
         if "dashscope.aliyuncs.com/api/v1/services" in endpoint:
             payload["input"] = {"prompt": request_params.get("prompt", "")}
             payload["parameters"] = {}
             if "image_url" in request_params:
                 payload["input"]["img_url"] = request_params["image_url"]
-            if req_type == "image":
+            if is_image:
                 payload["parameters"]["size"] = request_params.get("size", "1024*1024").replace("x", "*")
             return payload
 
         # 标准 OpenAI 格式组装
-        if req_type in ["image", "video"]:
+        if is_image or is_video:
             payload["prompt"] = request_params.get("prompt", "")
-            if "size" in request_params and req_type == "image":
+            if "size" in request_params and is_image:
                 payload["size"] = request_params["size"]
             if "image_url" in request_params:
                 payload["image_url"] = request_params["image_url"]
@@ -98,13 +107,17 @@ class UniversalProxyAdapter(BaseAdapter):
         headers = self._build_headers()
         payload = self._build_payload(request_params, req_type, endpoint)
 
+        # 提取当前请求是否为图像或视频生成任务
+        is_image_or_video = req_type in ["image", "video", "text_to_image", "image_to_image", "text_to_video",
+                                         "image_to_video"]
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 # ================= 1. 提交初始请求 =================
                 response = await client.post(endpoint, headers=headers, json=payload)
 
                 # 🌟 终极容错降级：如果非原生路由报 404 (说明中转站魔改了画图接口到聊天里)
-                if response.status_code == 404 and req_type in ["image", "video"] and "dashscope" not in endpoint:
+                if response.status_code == 404 and is_image_or_video and "dashscope" not in endpoint:
                     fallback_endpoint = self._get_endpoint("chat")
                     fallback_payload = {
                         "model": payload.get("model"),
@@ -151,7 +164,7 @@ class UniversalProxyAdapter(BaseAdapter):
                         return {"success": False, "error": f"任务超时 (超过10分钟未出结果): {task_id}"}
 
                 # ================= 3. 结果统一清洗 =================
-                if req_type in ["image", "video"]:
+                if is_image_or_video:
                     if "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
                         content = data["data"][0].get("url") or data["data"][0].get("b64_json")
                     elif "output" in data:
