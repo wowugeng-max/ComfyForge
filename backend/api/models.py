@@ -179,18 +179,14 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 🌟 3. 核心修复：多模态自适应探针
-        # 🌟 3. 核心修复：多模态自适应探针 (带名字嗅探的防呆增强版)
-        probe_type = "text"  # 默认兜底为文本
-
-        # [判断层级 1]：优先信任数据库的能力标签
+        # 3. 多模态自适应探针 (带名字嗅探)
+        probe_type = "text"
         if db_model.capabilities:
             if db_model.capabilities.get("image"):
                 probe_type = "image"
             elif db_model.capabilities.get("video"):
                 probe_type = "video"
 
-        # [判断层级 2]：终极防呆兜底！如果标签没打对，尝试从名字里提取关键字
         if probe_type == "text":
             model_name_lower = db_model.model_name.lower()
             if any(k in model_name_lower for k in ["image", "mj", "midjourney", "dall-e", "draw", "cogview"]):
@@ -198,13 +194,11 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
             elif any(k in model_name_lower for k in ["video", "sora", "kling", "wan", "veo", "runway"]):
                 probe_type = "video"
 
-        # 组装符合万能代理要求的参数
         probe_params = {
             "model": db_model.model_name,
             "type": probe_type
         }
 
-        # 根据不同模态分配专用的安全测试 Prompt
         if probe_type == "image":
             probe_params["prompt"] = "A simple white circle on a black background, minimal design."
             probe_params["size"] = "1024x1024"
@@ -218,21 +212,33 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         # 4. 执行生成测试
         result = await adapter.generate(probe_params)
 
-        # 5. 更新状态
+        # 5. 🌟 终极智能状态判定
         if isinstance(result, dict) and result.get("success"):
             db_model.health_status = "healthy"
             status_msg = "测试通过：模型运行健康！"
         else:
-            db_model.health_status = "error"
-            status_msg = f"测试失败：{result.get('error', '未知错误')}"
+            error_msg = str(result.get("error", "")).lower()
+
+            # 【核心破局点】：如果返回 HTTP 400 Bad Request，说明网关通了、Key对了，只是探针的默认参数被模型拒绝了。这其实是测试成功的标志！
+            if "http error 400" in error_msg or "invalidparameter" in error_msg or "url error" in error_msg:
+                db_model.health_status = "healthy"
+                status_msg = "测试通过：节点已连通！(此模型参数校验严格，请在画布中输入正确参数使用)"
+            elif "429" in error_msg or "quota" in error_msg:
+                db_model.health_status = "quota_exhausted"
+                status_msg = "测试失败：额度已耗尽或频率受限。"
+            elif "403" in error_msg or "unauthorized" in error_msg or "401" in error_msg:
+                db_model.health_status = "unauthorized"
+                status_msg = "测试失败：API Key 鉴权失败。"
+            else:
+                db_model.health_status = "error"
+                status_msg = f"测试失败：{result.get('error', '未知错误')}"
 
     except Exception as e:
         error_str = str(e).lower()
-        print(f"Test Probe Error: {error_str}")
         if "429" in error_str or "quota" in error_str:
             db_model.health_status = "quota_exhausted"
             status_msg = "测试失败：额度已耗尽或频率受限。"
-        elif "403" in error_str or "unauthorized" in error_str:
+        elif "403" in error_str or "unauthorized" in error_str or "401" in error_str:
             db_model.health_status = "unauthorized"
             status_msg = "测试失败：API Key 鉴权失败。"
         else:

@@ -87,6 +87,9 @@ class UniversalProxyAdapter(BaseAdapter):
         is_dashscope = "dashscope" in self.base_url
 
         # 🌟 1. 动态端点 & DashScope 官方原生协议拦截器
+        is_dashscope = "dashscope" in self.base_url
+
+        # 🌟 1. 动态端点 & DashScope 官方原生协议拦截器
         if is_dashscope and req_type in ["image", "video"]:
             # 阿里百炼兼容模式的残缺修补：强行转为 DashScope 原生 API
             dashscope_base = "https://dashscope.aliyuncs.com/api/v1"
@@ -99,7 +102,7 @@ class UniversalProxyAdapter(BaseAdapter):
                 payload = {
                     "model": model_name,
                     "input": {"prompt": request_params.get("prompt", "A white circle")},
-                    # 🌟 修复 1：阿里严苛校验，强行把探针的 1024x1024 替换为 1024*1024
+                    # 🌟 仅保留最核心的尺寸替换修复
                     "parameters": {"size": request_params.get("size", "1024*1024").replace("x", "*")}
                 }
             else:
@@ -112,11 +115,7 @@ class UniversalProxyAdapter(BaseAdapter):
                 if "image_url" in request_params:
                     payload["input"]["img_url"] = request_params["image_url"]
 
-            # 🌟 修复 2：图生图/图生视频防呆机制。如果是探针测试（未传图），自动塞一张阿里的公共测试图防拦截
-            if model_name in ["wanx-video", "wan2.1-i2v-turbo", "wan2.1-i2v-plus", "wanx-style-cosplay",
-                              "wanx-background-generation"]:
-                if "img_url" not in payload["input"]:
-                    payload["input"]["img_url"] = "https://img.alicdn.com/tfs/TB1WEcLb_tYBeNjy1XdXXXXXXa-256-256.png"
+            # (已删除了之前在这里强行塞入 img_url 的防呆代码)
 
         else:
             # 标准 OpenAI 路由 (适用官方 OpenAI 及大部分中转站)
