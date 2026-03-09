@@ -282,8 +282,10 @@ export default function KeyManager() {
       const capabilitiesObj = {
         chat: values.capabilities.includes('chat'),
         vision: values.capabilities.includes('vision'),
-        image: values.capabilities.includes('image'),
-        video: values.capabilities.includes('video'),
+        text_to_image: values.capabilities.includes('text_to_image'),
+        image_to_image: values.capabilities.includes('image_to_image'),
+        text_to_video: values.capabilities.includes('text_to_video'),
+        image_to_video: values.capabilities.includes('image_to_video'),
       };
 
       const payload = {
@@ -398,11 +400,13 @@ const modelColumns = [
     {
       title: '能力标签', key: 'capabilities',
       render: (_: any, record: any) => (
-        <Space size={[0, 4]} wrap>
+       <Space size={[0, 4]} wrap>
           {record.capabilities?.chat && <Tag color="cyan">文本</Tag>}
           {record.capabilities?.vision && <Tag color="blue">识图</Tag>}
-          {record.capabilities?.image && <Tag color="purple">绘图</Tag>}
-          {record.capabilities?.video && <Tag color="magenta">视频</Tag>}
+          {record.capabilities?.text_to_image && <Tag color="purple">文生图</Tag>}
+          {record.capabilities?.image_to_image && <Tag color="magenta">图生图</Tag>}
+          {record.capabilities?.text_to_video && <Tag color="volcano">文生视频</Tag>}
+          {record.capabilities?.image_to_video && <Tag color="red">图生视频</Tag>}
         </Space>
       ),
     },
@@ -604,10 +608,12 @@ const modelColumns = [
             1. 选择要批量覆盖的能力大类：
           </Text>
           <Radio.Group value={bulkCapability} onChange={e => setBulkCapability(e.target.value)} buttonStyle="solid">
-            <Radio.Button value="chat">文本 (Chat)</Radio.Button>
-            <Radio.Button value="vision">识图 (Vision)</Radio.Button>
-            <Radio.Button value="image">绘图 (Image)</Radio.Button>
-            <Radio.Button value="video">视频 (Video)</Radio.Button>
+            <Radio.Button value="chat">文本</Radio.Button>
+            <Radio.Button value="vision">识图</Radio.Button>
+            <Radio.Button value="text_to_image">文生图</Radio.Button>
+            <Radio.Button value="image_to_image">图生图</Radio.Button>
+            <Radio.Button value="text_to_video">文生视频</Radio.Button>
+            <Radio.Button value="image_to_video">图生视频</Radio.Button>
           </Radio.Group>
         </div>
 
@@ -638,8 +644,10 @@ const modelColumns = [
             <Checkbox.Group options={[
               { label: '文本 (Chat)', value: 'chat' },
               { label: '识图 (Vision)', value: 'vision' },
-              { label: '绘图 (Image)', value: 'image' },
-              { label: '视频 (Video)', value: 'video' },
+              { label: '文生图 (T2I)', value: 'text_to_image' },
+              { label: '图生图 (I2I)', value: 'image_to_image' },
+              { label: '文生视频 (T2V)', value: 'text_to_video' },
+              { label: '图生视频 (I2V)', value: 'image_to_video' },
             ]} />
           </Form.Item>
         </Form>

@@ -36,12 +36,42 @@ class UniversalOpenAISyncer(BaseSyncer):
                 return []
 
     def infer_capabilities(self, model_id: str) -> dict:
-        """基于模型名称的简单正则推断能力"""
-        caps = {"chat": True, "vision": False, "image": False, "video": False}
-        model_id_lower = model_id.lower()
-        # 如果模型名字里带 vision 或者 vl，就开启视觉识图能力
-        if "vision" in model_id_lower or "vl" in model_id_lower:
+        """
+                🌟 核心跃迁：基于全网主流大模型命名特征的智能分类引擎
+                匹配全新的 6 大 Task Type 架构。无法识别的（如 ep-）兜底为 chat。
+                """
+        caps = {
+            "chat": False,
+            "vision": False,
+            "text_to_image": False,
+            "image_to_image": False,
+            "text_to_video": False,
+            "image_to_video": False
+        }
+        m = model_id.lower()
+        # 1. 视频类判定 (图生视频 / 文生视频)
+        if any(k in m for k in ["i2v", "image-to-video", "img2vid"]):
+            caps["image_to_video"] = True
+        elif any(k in m for k in
+                 ["sora", "kling", "runway", "veo", "cogvideo", "vid", "t2v", "text-to-video", "wanx-video", "wan2"]):
+            caps["text_to_video"] = True
+
+        # 2. 图像类判定 (图生图 / 文生图)
+        elif any(k in m for k in ["i2i", "img2img", "cosplay", "background"]):
+            caps["image_to_image"] = True
+        elif any(k in m for k in
+                 ["dall-e", "midjourney", "mj-", "stable-diffusion", "sdxl", "cogview", "wanx-v1", "z-image", "draw",
+                  "t2i", "image"]):
+            caps["text_to_image"] = True
+
+        # 3. 多模态理解判定 (同时开启 chat 和 vision)
+        elif any(k in m for k in ["vision", "vl", "gpt-4o", "claude-3-5", "claude-3-opus", "gemini-1.5", "pixtral"]):
+            caps["chat"] = True
             caps["vision"] = True
+
+        # 4. 纯文本兜底 (包含 火山引擎 ep-, doubao, deepseek 等未匹配的盲盒)
+        else:
+            caps["chat"] = True
         return caps
 
     def get_context_ui_params(self, capabilities: dict) -> dict:

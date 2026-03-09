@@ -177,6 +177,8 @@ class UniversalProxyAdapter(BaseAdapter):
                     "raw_response": data
                 }
             except httpx.HTTPStatusError as e:
-                return {"success": False, "error": f"HTTP Error {e.response.status_code}: {e.response.text}"}
+                # 🌟 核心跃迁：把报错时试图访问的 endpoint 完整打印出来，瞬间定位路由问题！
+                return {"success": False,
+                        "error": f"HTTP {e.response.status_code} 拒绝访问网关 [{endpoint}]: {e.response.text}"}
             except Exception as e:
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": f"请求异常 [{endpoint}]: {str(e)}"}

@@ -86,8 +86,14 @@ class ModelConfigBase(BaseModel):
     last_tested_at: Optional[datetime] = None
     # 🌟 新增：数据交互字段
     is_favorite: bool = False
+    # 🌟 核心跃迁：放弃粗犷分类，全面拥抱大厂 Task Type 标准
     capabilities: Dict[str, bool] = Field(default_factory=lambda: {
-        "chat": False, "vision": False, "image": False, "video": False
+        "chat": False,
+        "vision": False,
+        "text_to_image": False,
+        "image_to_image": False,
+        "text_to_video": False,
+        "image_to_video": False
     })
     context_ui_params: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True

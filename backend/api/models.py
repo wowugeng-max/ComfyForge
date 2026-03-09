@@ -158,9 +158,11 @@ def delete_model(model_id: int, db: Session = Depends(get_db)):
 
 # backend/api/models.py
 
+# backend/api/models.py
+
 @router.post("/{model_id:int}/test")
 async def test_model_health(model_id: int, db: Session = Depends(get_db)):
-    """对单个模型进行连通性探针测试，并更新其健康档案"""
+    """对单个模型进行连通性探针测试，并更新其健康档案 (完全基于 6 大 Task Type 驱动)"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -181,46 +183,73 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 1. 模态识别
+        # 🌟 核心跃迁：完全信任能力矩阵标签，绝不瞎猜名字！
+        caps = db_model.capabilities or {}
+
         probe_type = "text"
-        if db_model.capabilities:
-            if db_model.capabilities.get("image"):
-                probe_type = "image"
-            elif db_model.capabilities.get("video"):
-                probe_type = "video"
-
-        if probe_type == "text":
-            model_name_lower = db_model.model_name.lower()
-            if any(k in model_name_lower for k in ["image", "mj", "midjourney", "dall-e", "draw", "cogview"]):
-                probe_type = "image"
-            elif any(k in model_name_lower for k in ["video", "sora", "kling", "wan", "veo", "runway"]):
-                probe_type = "video"
-
-        # 2. 组装最严谨的真实验证参数
         probe_params = {
-            "model": db_model.model_name,
-            "type": probe_type
+            "model": db_model.model_name
         }
 
-        # 🌟 修复：使用阿里官方 OSS 提供的标准测试图，确保真正有权限的账号能 100% 跑通
+        # 阿里官方 OSS 提供的标准安全测试图
         OFFICIAL_TEST_IMAGE = "https://dashscope.oss-cn-beijing.aliyuncs.com/images/dog_and_girl.jpeg"
 
-        if probe_type == "image":
-            probe_params["prompt"] = "A simple white circle on a black background, minimal design."
-            probe_params["size"] = "1024x1024"
-            probe_params["image_url"] = OFFICIAL_TEST_IMAGE
-        elif probe_type == "video":
-            probe_params["prompt"] = "A simple white cloud moving slowly."
-            probe_params["image_url"] = OFFICIAL_TEST_IMAGE
+        # 🚀 按照任务的复杂程度，从高到低进行降级匹配
+        if caps.get("image_to_video"):
+            probe_type = "video"
+            probe_params.update({
+                "prompt": "A simple white cloud moving slowly.",
+                "image_url": OFFICIAL_TEST_IMAGE  # 图生视频：强制发图
+            })
+        elif caps.get("text_to_video"):
+            probe_type = "video"
+            probe_params.update({
+                "prompt": "A simple white cloud moving slowly."
+                # 文生视频：绝对不发图，避免 url error
+            })
+        elif caps.get("image_to_image"):
+            probe_type = "image"
+            probe_params.update({
+                "prompt": "A simple white circle on a black background.",
+                "size": "1024x1024",
+                "image_url": OFFICIAL_TEST_IMAGE  # 图生图：强制发图
+            })
+        elif caps.get("text_to_image"):
+            probe_type = "image"
+            probe_params.update({
+                "prompt": "A simple white circle on a black background, minimal design.",
+                "size": "1024x1024"
+                # 文生图：绝对不发图，避免 url error
+            })
+        elif caps.get("vision"):
+            probe_type = "text"
+            probe_params.update({
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Describe this image briefly."},
+                            {"type": "image_url", "image_url": {"url": OFFICIAL_TEST_IMAGE}}
+                        ]
+                    }
+                ],
+                "max_tokens": 20
+            })
         else:
-            probe_params["prompt"] = "Hello! Could you please acknowledge this test message?"
-            probe_params["max_tokens"] = 20
-            probe_params["temperature"] = 0.1
+            # 兜底：纯文本对话 (Chat)
+            probe_type = "text"
+            probe_params.update({
+                "prompt": "Hello! Could you please acknowledge this test message?",
+                "max_tokens": 20,
+                "temperature": 0.1
+            })
 
-        # 3. 执行端到端真实生成
+        probe_params["type"] = probe_type
+
+        # 执行端到端真实生成
         result = await adapter.generate(probe_params)
 
-        # 4. 🌟 恢复严苛判断：必须真正生成/提交任务成功，才算测试通过！
+        # 🌟 恢复最严苛的成功判定
         if isinstance(result, dict) and result.get("success"):
             db_model.health_status = "healthy"
             status_msg = "测试通过：此 Key 可正常调用该模型！"
