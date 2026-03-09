@@ -10,7 +10,6 @@ from ..models.api_key import APIKey
 from ..models.model_config import ModelConfig
 from ..models.schemas import ModelConfigOut
 from ..core.services.model_syncer import ModelSyncer
-import asyncio
 from ..core.adapters.factory import AdapterFactory
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -28,81 +27,110 @@ class ModelCreateUpdate(BaseModel):
     is_active: Optional[bool] = True
 
 
-# 定义接收 JSON 的 Pydantic 模型
 class UIParamsUpdate(BaseModel):
     context_ui_params: Dict[str, Any]
 
 
-# ================= 批量更新 UI 参数接口 =================
 class BulkUIParamsUpdate(BaseModel):
     api_key_id: int
-    capability: str  # 能力大类：'chat', 'vision', 'image_to_image', 'text_to_image' 等
+    capability: str
     ui_params_array: List[Any]
 
 
+# ================= 1. 查询与同步路由 (恢复你原有的完美逻辑) =================
+
 @router.get("/", response_model=List[ModelConfigOut])
-def get_models(db: Session = Depends(get_db)):
-    return db.query(ModelConfig).all()
+def list_models(
+        mode: Optional[str] = Query(None, description="能力过滤: chat, vision, image, video"),
+        key_id: Optional[int] = Query(None, description="按 API Key ID 过滤模型"),
+        db: Session = Depends(get_db)
+):
+    query = db.query(ModelConfig).filter(ModelConfig.is_active == True)
+    if key_id is not None:
+        query = query.filter(ModelConfig.api_key_id == key_id)
+
+    all_models = query.all()
+    if mode:
+        return [m for m in all_models if m.capabilities and m.capabilities.get(mode) is True]
+    return all_models
 
 
-@router.post("/", response_model=ModelConfigOut)
-def create_model(payload: ModelCreateUpdate, db: Session = Depends(get_db)):
-    db_model = ModelConfig(**payload.model_dump())
-    db.add(db_model)
+@router.post("/sync/{key_id}")
+async def sync_by_key_id(key_id: int, db: Session = Depends(get_db)):
+    """根据指定的 Key ID 执行模型批量同步"""
+    key_record = db.query(APIKey).filter(APIKey.id == key_id).first()
+    if not key_record:
+        raise HTTPException(status_code=404, detail="未找到该 API Key，请刷新页面重试")
+    if not key_record.is_active:
+        raise HTTPException(status_code=400, detail="该 API Key 未启用，无法同步")
+
+    try:
+        new_count = await ModelSyncer.sync_provider(
+            db=db,
+            provider_id=key_record.provider,
+            key_id=key_id
+        )
+        return {"status": "success", "message": f"同步完成，为该 Key 更新了 {new_count} 个模型"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"同步服务内部错误: {str(e)}")
+
+
+# ================= 2. 手动模型 CRUD 路由 =================
+
+@router.post("/")
+def create_model(model_data: ModelCreateUpdate, db: Session = Depends(get_db)):
+    if model_data.api_key_id:
+        key_record = db.query(APIKey).filter(APIKey.id == model_data.api_key_id).first()
+        if not key_record:
+            raise HTTPException(status_code=404, detail="绑定的 API Key 不存在")
+
+    existing = db.query(ModelConfig).filter(
+        ModelConfig.api_key_id == model_data.api_key_id,
+        ModelConfig.model_name == model_data.model_name
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="已存在相同代号的模型，请勿重复添加")
+
+    new_model = ModelConfig(**model_data.model_dump())
+    new_model.last_synced = datetime.utcnow()
+    db.add(new_model)
     db.commit()
-    db.refresh(db_model)
-    return db_model
+    db.refresh(new_model)
+    return {"status": "success", "id": new_model.id}
 
 
-@router.put("/{model_id:int}", response_model=ModelConfigOut)
-def update_model(model_id: int, payload: ModelCreateUpdate, db: Session = Depends(get_db)):
+@router.put("/{model_id:int}")
+def update_model(model_id: int, model_data: ModelCreateUpdate, db: Session = Depends(get_db)):
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
-        raise HTTPException(status_code=404, detail="模型未找到")
-
-    for key, value in payload.model_dump().items():
-        setattr(db_model, key, value)
-
+        raise HTTPException(status_code=404, detail="未找到该模型")
+    db_model.display_name = model_data.display_name
+    db_model.model_name = model_data.model_name
+    db_model.capabilities = model_data.capabilities
     db.commit()
-    db.refresh(db_model)
-    return db_model
+    return {"status": "success"}
 
 
 @router.delete("/{model_id:int}")
 def delete_model(model_id: int, db: Session = Depends(get_db)):
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
-        raise HTTPException(status_code=404, detail="模型未找到")
+        raise HTTPException(status_code=404, detail="未找到该模型")
+    if not db_model.is_manual:
+        raise HTTPException(status_code=403, detail="官方同步的模型禁止手动删除")
     db.delete(db_model)
     db.commit()
     return {"status": "success"}
 
 
-@router.post("/{model_id:int}/sync")
-async def sync_model_params(model_id: int, db: Session = Depends(get_db)):
-    """从云端供应商处同步该模型的最新参数定义"""
-    db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
-    if not db_model:
-        raise HTTPException(status_code=404, detail="模型未找到")
-
-    key = db.query(APIKey).filter(APIKey.id == db_model.api_key_id).first()
-    if not key:
-        raise HTTPException(status_code=400, detail="未关联有效的 API Key")
-
-    try:
-        syncer = ModelSyncer(db_model.provider, key.key)
-        params = await syncer.fetch_params(db_model.model_name)
-
-        db_model.context_ui_params = params
-        db.commit()
-        return {"status": "success", "params": params}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+# ================= 3. 探针测试路由 (搭载全新 DSL 自适应引擎) =================
 
 @router.post("/{model_id:int}/test")
 async def test_model_health(model_id: int, db: Session = Depends(get_db)):
-    """对单个模型进行连通性探针测试 (完全基于 DSL 配置驱动)"""
+    """基于 DSL 模板驱动的连通性探针测试"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
@@ -111,42 +139,36 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     if not key_record or not key_record.is_active:
         db_model.health_status = "error"
         db.commit()
-        raise HTTPException(status_code=400, detail="绑定的 API Key 无效或未启用")
+        raise HTTPException(status_code=400, detail="绑定的 API Key 无效")
 
     from ..models.provider import Provider
     provider_record = db.query(Provider).filter(Provider.id == db_model.provider).first()
     if not provider_record:
-        raise HTTPException(status_code=400, detail=f"未找到供应商 [{db_model.provider}]")
+        raise HTTPException(status_code=400, detail="未找到供应商配置")
 
     try:
         adapter_class = AdapterFactory.get_adapter(db_model.provider, db)
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 1. 自动选择第一个可用的能力作为探针模态
         caps = db_model.capabilities or {}
-        # 优先级：文生图 > 图生图 > 对话 > 视觉
         probe_type = "chat"
         for priority in ["text_to_image", "image_to_image", "text_to_video", "image_to_video", "vision", "chat"]:
             if caps.get(priority):
                 probe_type = priority
                 break
 
-        # 2. 🌟 核心改动：准备探针“原材料”池
-        # 无论厂商如何要求 JSON 结构，我们只提供基础变量，由渲染器根据 DSL 模板自行挑选
         OFFICIAL_TEST_IMAGE = "https://img.alicdn.com/tfs/TB1p.bgQXXXXXbFXFXXXXXXXXXX-500-500.png"
 
         probe_params = {
             "model": db_model.model_name,
             "type": probe_type,
-            "prompt": "A simple white circle on a black background, minimal design.",
+            "prompt": "A simple white circle on a black background.",
             "size": "1024x1024",
         }
 
-        # 如果需要图片输入，则加入图片变量
         if probe_type in ["image_to_image", "image_to_video", "vision"]:
             probe_params["image_url"] = OFFICIAL_TEST_IMAGE
 
-        # 为 vision 和 chat 提供标准的 messages 数组变量，供 {{messages}} 占位符使用
         if probe_type == "vision":
             probe_params["messages"] = [{
                 "role": "user",
@@ -158,7 +180,6 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
         else:
             probe_params["messages"] = [{"role": "user", "content": probe_params["prompt"]}]
 
-        # 3. 执行生成 (Adapter 会处理 DSL 模板渲染)
         result = await adapter.generate(probe_params)
 
         if isinstance(result, dict) and result.get("success"):
@@ -166,8 +187,15 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
             status_msg = "测试通过"
         else:
             error_msg = str(result.get("error", "")).lower()
-            db_model.health_status = "error"
-            status_msg = f"调用失败：{result.get('error', '未知错误')}"
+            if "429" in error_msg or "quota" in error_msg:
+                db_model.health_status = "quota_exhausted"
+                status_msg = "测试失败：额度耗尽"
+            elif "unauthorized" in error_msg or "401" in error_msg:
+                db_model.health_status = "unauthorized"
+                status_msg = "测试失败：无权限"
+            else:
+                db_model.health_status = "error"
+                status_msg = f"调用失败：{result.get('error', '未知错误')}"
 
     except Exception as e:
         db_model.health_status = "error"
@@ -176,33 +204,24 @@ async def test_model_health(model_id: int, db: Session = Depends(get_db)):
     db_model.last_tested_at = datetime.utcnow()
     db.commit()
 
-    return {
-        "status": db_model.health_status,
-        "message": status_msg,
-        "last_tested_at": db_model.last_tested_at
-    }
+    return {"status": db_model.health_status, "message": status_msg, "last_tested_at": db_model.last_tested_at}
 
 
-@router.patch("/{model_id:int}/params")
+@router.put("/{model_id:int}/ui-params")
 def update_model_ui_params(model_id: int, payload: UIParamsUpdate, db: Session = Depends(get_db)):
-    """更新单个模型的 UI 参数字典"""
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
         raise HTTPException(status_code=404, detail="模型未找到")
-
     db_model.context_ui_params = payload.context_ui_params
     db.commit()
     return {"status": "success"}
 
 
-@router.post("/bulk_params")
+@router.put("/bulk/ui-params")
 def bulk_update_ui_params(payload: BulkUIParamsUpdate, db: Session = Depends(get_db)):
-    """批量覆写该 Key 下所有匹配模型的参数"""
     models = db.query(ModelConfig).filter(ModelConfig.api_key_id == payload.api_key_id).all()
-    updated_count = 0
-
     from sqlalchemy.orm.attributes import flag_modified
-
+    updated_count = 0
     for m in models:
         if m.capabilities and m.capabilities.get(payload.capability):
             current_params = dict(m.context_ui_params) if m.context_ui_params else {}
@@ -210,9 +229,8 @@ def bulk_update_ui_params(payload: BulkUIParamsUpdate, db: Session = Depends(get
             m.context_ui_params = current_params
             flag_modified(m, "context_ui_params")
             updated_count += 1
-
     db.commit()
-    return {"status": "success", "message": f"成功批量覆写了 {updated_count} 个模型的 {payload.capability} 参数！"}
+    return {"status": "success", "message": f"成功更新 {updated_count} 个模型"}
 
 
 class FavoriteUpdate(BaseModel):
@@ -220,10 +238,10 @@ class FavoriteUpdate(BaseModel):
 
 
 @router.patch("/{model_id:int}/favorite")
-def update_favorite(model_id: int, payload: FavoriteUpdate, db: Session = Depends(get_db)):
+def toggle_model_favorite(model_id: int, payload: FavoriteUpdate, db: Session = Depends(get_db)):
     db_model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
     if not db_model:
         raise HTTPException(status_code=404, detail="模型未找到")
     db_model.is_favorite = payload.is_favorite
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "is_favorite": db_model.is_favorite}

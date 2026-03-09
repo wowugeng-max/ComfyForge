@@ -12,7 +12,7 @@ from backend.models.api_key import APIKey
 class UniversalProxyAdapter(BaseAdapter):
     """
     极致纯净版配置驱动引擎 (Pure Config-Driven)
-    🌟 没有任何厂商硬编码补丁！一切皆由前端 UI 下发的 DSL 模板决定！
+    🌟 支持模态级的局部 Header 注入，完美解决大厂同步/异步混合接口冲突！
     """
 
     def __init__(self, provider: Provider, api_key: APIKey = None):
@@ -32,12 +32,12 @@ class UniversalProxyAdapter(BaseAdapter):
             elif auth_type == "x-api-key":
                 headers["x-api-key"] = self.api_key.key
 
+        # 全局 Header
         if self.provider.custom_headers:
             headers.update(self.provider.custom_headers)
         return headers
 
     def _get_route_config(self, req_type: str) -> Union[str, Dict[str, Any]]:
-        """绝对忠实地获取配置路由"""
         if self.provider.endpoints and self.provider.endpoints.get(req_type):
             return self.provider.endpoints[req_type]
 
@@ -46,23 +46,13 @@ class UniversalProxyAdapter(BaseAdapter):
             if fallback_type and self.provider.endpoints.get(fallback_type):
                 return self.provider.endpoints[fallback_type]
 
-        default_paths = {
-            "chat": "/chat/completions",
-            "vision": "/chat/completions",
-            "text_to_image": "/images/generations",
-            "image_to_image": "/images/generations",
-            "text_to_video": "/videos/generations",
-            "image_to_video": "/videos/generations"
-        }
-        return default_paths.get(req_type, "/chat/completions")
+        return ""
 
     def _render_template(self, template: Any, params: Dict[str, Any]) -> Any:
-        """纯粹的递归渲染器：自动填充参数并剔除空值 (无任何特判)"""
         if isinstance(template, dict):
             rendered = {}
             for k, v in template.items():
                 val = self._render_template(v, params)
-                # 核心机制：当且仅当值存在时才保留键，完美应对有无图片的动态变化
                 if val is not None:
                     rendered[k] = val
             return rendered
@@ -82,7 +72,6 @@ class UniversalProxyAdapter(BaseAdapter):
 
     def _build_payload(self, request_params: Dict[str, Any], req_type: str, route_config: Union[str, Dict[str, Any]]) -> \
     Dict[str, Any]:
-        """无脑执行配置组装"""
         # 1. DSL 渲染 (如果配了)
         if isinstance(route_config, dict) and "payload_template" in route_config:
             context = {
@@ -94,7 +83,7 @@ class UniversalProxyAdapter(BaseAdapter):
             }
             return self._render_template(route_config["payload_template"], context)
 
-        # 2. OpenAI 标准组装兜底 (如果配的是普通 URL 或没配)
+        # 2. OpenAI 标准组装兜底
         model_name = request_params.get("model")
         payload = {"model": model_name}
         is_image_or_video = req_type in ["text_to_image", "image_to_image", "text_to_video", "image_to_video", "image",
@@ -102,10 +91,8 @@ class UniversalProxyAdapter(BaseAdapter):
 
         if is_image_or_video:
             payload["prompt"] = request_params.get("prompt", "")
-            if "size" in request_params:
-                payload["size"] = request_params["size"]
-            if "image_url" in request_params:
-                payload["image_url"] = request_params["image_url"]
+            if "size" in request_params: payload["size"] = request_params["size"]
+            if "image_url" in request_params: payload["image_url"] = request_params["image_url"]
         else:
             messages = request_params.get("messages", [])
             if not messages and "prompt" in request_params:
@@ -134,9 +121,22 @@ class UniversalProxyAdapter(BaseAdapter):
         route_config = self._get_route_config(req_type)
         headers = self._build_headers()
 
-        endpoint_suffix = route_config.get("url", "") if isinstance(route_config, dict) else str(route_config)
-        endpoint = endpoint_suffix if endpoint_suffix.startswith("http") else f"{self.base_url}{endpoint_suffix}"
+        # 🌟 核心修复点：如果有路由级别的局部 Header，在这里覆盖注入！
+        if isinstance(route_config, dict) and "headers" in route_config:
+            headers.update(route_config["headers"])
 
+        endpoint_suffix = route_config.get("url", "") if isinstance(route_config, dict) else str(route_config)
+
+        # 智能兜底 OpenAI 后缀
+        if not endpoint_suffix or endpoint_suffix.strip() in ["", "/"]:
+            defaults = {
+                "chat": "/chat/completions", "vision": "/chat/completions",
+                "text_to_image": "/images/generations", "image_to_image": "/images/generations",
+                "text_to_video": "/videos/generations", "image_to_video": "/videos/generations"
+            }
+            endpoint_suffix = defaults.get(req_type, "/chat/completions")
+
+        endpoint = endpoint_suffix if endpoint_suffix.startswith("http") else f"{self.base_url}{endpoint_suffix}"
         payload = self._build_payload(request_params, req_type, route_config)
         is_image_or_video = req_type in ["image", "video", "text_to_image", "image_to_image", "text_to_video",
                                          "image_to_video"]
@@ -144,7 +144,7 @@ class UniversalProxyAdapter(BaseAdapter):
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(endpoint, headers=headers, json=payload)
-                response.raise_for_status()  # 严格抛错，不符合配置就炸
+                response.raise_for_status()
                 data = response.json()
 
                 task_id = None
@@ -160,7 +160,6 @@ class UniversalProxyAdapter(BaseAdapter):
                         data.get("output", {}).get("task_status", ""))).lower()
 
                 if task_id and status in ["pending", "processing", "submitted", "in_progress", "queued"]:
-                    # 🌟 将轮询地址也全部交由 DSL 控制！
                     poll_url_template = route_config.get("poll_url") if isinstance(route_config, dict) else None
                     if poll_url_template:
                         poll_endpoint = poll_url_template.replace("{{task_id}}", str(task_id))
@@ -215,6 +214,6 @@ class UniversalProxyAdapter(BaseAdapter):
 
             except httpx.HTTPStatusError as e:
                 return {"success": False,
-                        "error": f"HTTP {e.response.status_code} 拒绝访问网关 [{endpoint}]: {e.response.text}"}
+                        "error": f"HTTP {e.response.status_code} 拒绝访问 [{endpoint}]: {e.response.text}"}
             except Exception as e:
                 return {"success": False, "error": f"请求异常 [{endpoint}]: {str(e)}"}
