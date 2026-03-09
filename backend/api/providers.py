@@ -1,12 +1,13 @@
 # backend/api/providers.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict  # 🌟 1. 补上 Dict 导入
 from ..db import get_db
 from ..models.provider import Provider
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
+
 
 # --- 1. 定义响应与输入模型 (解决 422 错误) ---
 class ProviderBase(BaseModel):
@@ -20,14 +21,21 @@ class ProviderBase(BaseModel):
     default_base_url: Optional[str] = None
     is_active: bool = True
 
+    # 🌟 2. 核心修复：在这里加上这两个高级字段，FastAPI 才会放行它们！
+    endpoints: Optional[Dict[str, str]] = {}
+    custom_headers: Optional[Dict[str, str]] = {}
+
+
 class ProviderOut(ProviderBase):
-    model_config = ConfigDict(from_attributes=True) # 🌟 解决 500 序列化错误
+    model_config = ConfigDict(from_attributes=True)  # 🌟 解决 500 序列化错误
+
 
 # --- 2. 路由实现 (解决 405 错误) ---
 
 @router.get("/", response_model=List[ProviderOut])
 def list_providers(db: Session = Depends(get_db)):
     return db.query(Provider).all()
+
 
 @router.post("/")
 def create_provider(data: ProviderBase, db: Session = Depends(get_db)):
@@ -39,15 +47,21 @@ def create_provider(data: ProviderBase, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "message": "新厂商配置已注入"}
 
+
 @router.put("/{provider_id}")
 def update_provider(provider_id: str, data: ProviderBase, db: Session = Depends(get_db)):
     provider = db.query(Provider).filter(Provider.id == provider_id).first()
     if not provider:
         raise HTTPException(status_code=404, detail="找不到该厂商")
-    for key, value in data.model_dump().items():
+
+    # 🌟 3. 核心修复：加上 exclude_unset=True，确保只更新前端传来的字段
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
         setattr(provider, key, value)
+
     db.commit()
     return {"status": "success", "message": "配置已更新"}
+
 
 @router.delete("/{provider_id}")
 def delete_provider(provider_id: str, db: Session = Depends(get_db)):
