@@ -233,7 +233,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         <Handle type="target" position={Position.Left} id="text" style={{ top: 50, background: '#52c41a', width: 10, height: 10 }} />
       </Tooltip>
     );
-    if (mode === 'vision' || mode === 'image' || mode === 'video') {
+// 🌟 物理隔离：如果是纯文生图或文生视频，画布上连图片输入的小圆点都不会显示！
+    if (mode === 'vision' || mode === 'image_to_image' || mode === 'image_to_video') {
       handles.push(
         <Tooltip key="img-in" title="输入参考图片" placement="left">
           <Handle type="target" position={Position.Left} id="image" style={{ top: 80, background: '#1890ff', width: 10, height: 10 }} />

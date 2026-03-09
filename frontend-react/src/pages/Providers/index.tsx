@@ -9,7 +9,7 @@ const { Option } = Select;
 
 // 🌟 升级：主流大厂预设模板（注入高级路由能力）
 const PRESET_PROVIDERS = [
-  {
+ {
     label: '阿里云 (千问/万相)',
     color: 'orange',
     data: {
@@ -19,14 +19,15 @@ const PRESET_PROVIDERS = [
       auth_type: 'Bearer',
       service_type: 'llm',
       default_base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      supported_modalities: ['text', 'vision', 'image', 'video'],
+      supported_modalities: ['chat', 'vision', 'text_to_image', 'image_to_image', 'text_to_video', 'image_to_video'],
       is_active: true,
-      // 🌟 极客配置：文本和生图走上面的兼容模式网关，唯独生视频强制覆盖为原生网关！
+      // 🌟 精准匹配 6 大模态的原生网关
       endpoints: {
-        image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
-        video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
+        text_to_image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
+        image_to_image: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis',
+        text_to_video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis',
+        image_to_video: 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
       },
-      // 🌟 极客配置：原生异步视频接口必须带的头
       custom_headers: {
         'X-DashScope-Async': 'enable'
       }
@@ -197,7 +198,14 @@ export default function ProviderManager() {
       render: (mods: string[]) => (
         <Space size={[0, 4]} wrap>
           {mods?.map(m => {
-            const colors: any = { text: 'blue', vision: 'geekblue', image: 'magenta', video: 'volcano' };
+            const colors: any = {
+              chat: 'blue',
+              vision: 'geekblue',
+              text_to_image: 'magenta',
+              image_to_image: 'purple',
+              text_to_video: 'volcano',
+              image_to_video: 'red'
+            };
             return <Tag key={m} bordered={false} color={colors[m] || 'default'}>{m.toUpperCase()}</Tag>;
           })}
         </Space>
@@ -338,10 +346,12 @@ export default function ProviderManager() {
           <Title level={5} style={{ marginBottom: 16 }}>模态与开关</Title>
           <Form.Item name="supported_modalities" label="支持的生成能力" rules={[{ required: true }]}>
             <Select mode="multiple" placeholder="请选择模态" style={{ width: '100%' }}>
-              <Option value="text">TEXT (文本/对话)</Option>
-              <Option value="vision">VISION (识图/分析)</Option>
-              <Option value="image">IMAGE (绘画/生成)</Option>
-              <Option value="video">VIDEO (视频生成)</Option>
+              <Option value="chat">CHAT (文本对话)</Option>
+              <Option value="vision">VISION (视觉理解)</Option>
+              <Option value="text_to_image">T2I (纯文生图)</Option>
+              <Option value="image_to_image">I2I (图生图)</Option>
+              <Option value="text_to_video">T2V (纯文生视频)</Option>
+              <Option value="image_to_video">I2V (图生视频)</Option>
             </Select>
           </Form.Item>
 
@@ -353,14 +363,23 @@ export default function ProviderManager() {
             >
               <div style={{ marginBottom: 24 }}>
                 <Text strong style={{ fontSize: 13, color: '#475569' }}>端点路由重写 (Endpoint Overrides)</Text>
-                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>如果填写以 http 开头的完整 URL，则该模态将强行忽略上面的全局网关。</div>
-                <Form.Item name={['endpoints', 'chat']} label="文本端点后缀 (默认: /chat/completions)">
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>精确到模态级的路由接管。</div>
+                <Form.Item name={['endpoints', 'chat']} label="对话端点 (chat)">
                   <Input placeholder="/chat/completions" />
                 </Form.Item>
-                <Form.Item name={['endpoints', 'image']} label="生图端点后缀 (默认: /images/generations)">
+                <Form.Item name={['endpoints', 'vision']} label="视觉端点 (vision)">
+                  <Input placeholder="/chat/completions" />
+                </Form.Item>
+                <Form.Item name={['endpoints', 'text_to_image']} label="文生图端点 (text_to_image)">
                   <Input placeholder="/images/generations" />
                 </Form.Item>
-                <Form.Item name={['endpoints', 'video']} label="视频端点后缀 (默认: /videos/generations)">
+                <Form.Item name={['endpoints', 'image_to_image']} label="图生图端点 (image_to_image)">
+                  <Input placeholder="/images/generations" />
+                </Form.Item>
+                <Form.Item name={['endpoints', 'text_to_video']} label="文生视频端点 (text_to_video)">
+                  <Input placeholder="/videos/generations" />
+                </Form.Item>
+                <Form.Item name={['endpoints', 'image_to_video']} label="图生视频端点 (image_to_video)">
                   <Input placeholder="/videos/generations" />
                 </Form.Item>
               </div>
