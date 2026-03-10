@@ -33,8 +33,55 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const [paramValues, setParamValues] = useState<Record<string, any>>(data.paramValues || {});
 
   const [isRunning, setIsRunning] = useState(false);
+  const [progressMsg, setProgressMsg] = useState<string>('');
+
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
+
+  // 🌟 核心破案点：绝对硬编码直连后端的 8000 端口，彻底绕过前端代理黑洞！
+  useEffect(() => {
+    const wsURL = `ws://127.0.0.1:8000/api/ws/${id}`;
+    console.log(`📡 [WS] 正在尝试连接大动脉: ${wsURL}`);
+
+    const ws = new WebSocket(wsURL);
+
+    ws.onopen = () => {
+      console.log(`🟢 [WS] 大动脉连接成功！画布节点通道 ID: ${id}`);
+    };
+
+    ws.onmessage = (event) => {
+      console.log(`📩 [WS] 接收到心跳包:`, event.data);
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'status') {
+          setProgressMsg(payload.message);
+        } else if (payload.type === 'result') {
+          message.success('物理节点渲染成功！');
+          updateNodeData(id, { result: payload.data });
+          setIsRunning(false);
+          setProgressMsg('');
+        } else if (payload.type === 'error') {
+          message.error(payload.message);
+          setIsRunning(false);
+          setProgressMsg('');
+        }
+      } catch (e) {
+        console.error("❌ [WS] 心跳包解析失败", e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error(`❌ [WS] 大动脉连接断裂！请检查后端 8000 端口是否存活。`, error);
+    };
+
+    ws.onclose = (e) => {
+      console.log(`🔴 [WS] 大动脉已关闭 (状态码: ${e.code})`);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [id, updateNodeData]);
 
   const [{ isOver }, drop] = useDrop(() => ({
     accept: DndItemTypes.ASSET,
@@ -44,61 +91,40 @@ export default function ComfyUIEngineNode(props: NodeProps) {
         try {
           const rawContent = asset.data?.content || asset.content || asset.data || {};
           let parsedData = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
-
-          let finalWorkflowObj = parsedData;
-          let finalParams = null;
-
-          if (parsedData && parsedData.workflow_json) {
-            finalWorkflowObj = parsedData.workflow_json;
-            finalParams = parsedData.parameters || null;
-          } else if (parsedData && parsedData.parameters) {
-            finalParams = parsedData.parameters;
-          }
+          let finalWorkflowObj = parsedData.workflow_json || parsedData;
+          let finalParams = parsedData.parameters || null;
 
           const jsonString = JSON.stringify(finalWorkflowObj, null, 2);
           setWorkflowJson(jsonString);
           setParameters(finalParams);
           setParamValues({});
 
-          updateNodeData(id, {
-            label: `🚀 ${asset.name}`,
-            workflowJson: jsonString,
-            parameters: finalParams,
-            paramValues: {}
-          });
-          message.success(`成功载入工作流: ${asset.name}`);
-        } catch (err) {
-          message.error('工作流数据解析失败');
-        }
-      } else {
-        message.warning('只能拖入“工作流”资产');
+          updateNodeData(id, { label: `🚀 ${asset.name}`, workflowJson: jsonString, parameters: finalParams, paramValues: {} });
+          message.success(`载入工作流: ${asset.name}`);
+        } catch (err) {}
       }
     },
     collect: (monitor) => ({ isOver: monitor.isOver() }),
   }));
 
   useEffect(() => {
-    const fetchInitData = async () => {
-      try {
-        const [provRes, keyRes] = await Promise.all([providerApi.getAll('comfyui'), keyApi.getAll()]);
-        setProviders(provRes.data);
-        setKeys(keyRes.data);
-      } catch (error) {}
-    };
-    fetchInitData();
+    providerApi.getAll('comfyui').then(r => setProviders(r.data)).catch(()=>{});
+    keyApi.getAll().then(r => setKeys(r.data)).catch(()=>{});
   }, []);
 
-  const availableKeys = keys.filter(k => k.provider.toLowerCase() === selectedProvider?.toLowerCase() && k.is_active);
+  const availableKeys = keys.filter(k => String(k.provider).toLowerCase() === String(selectedProvider).toLowerCase() && k.is_active);
 
   const handleRun = async () => {
     if (!selectedProvider || !selectedKeyId) return message.warning('请选择执行凭证');
     if (!workflowJson.trim()) return message.warning('请拖入工作流或输入JSON');
 
+    // 🌟 清空历史产物，并开启 loading
+    updateNodeData(id, { result: null });
     setIsRunning(true);
+    setProgressMsg('正在唤醒本地引擎...');
 
     try {
       let finalWorkflow = JSON.parse(workflowJson);
-
       const edges = getEdges();
       const nodes = getNodes();
       const incomingEdges = edges.filter(e => e.target === id);
@@ -107,15 +133,11 @@ export default function ComfyUIEngineNode(props: NodeProps) {
         Object.keys(parameters).forEach(paramName => {
           const config = parameters[paramName];
           let valToInject = paramValues[paramName];
-
           const connectedEdge = incomingEdges.find(e => e.targetHandle === `param-${paramName}`);
           if (connectedEdge) {
             const sourceNode = nodes.find(n => n.id === connectedEdge.source);
-            if (sourceNode) {
-              valToInject = sourceNode.data.result?.content || sourceNode.data.asset?.data?.content || sourceNode.data.incoming_data?.content;
-            }
+            if (sourceNode) valToInject = sourceNode.data.result?.content || sourceNode.data.asset?.data?.content || sourceNode.data.incoming_data?.content;
           }
-
           if (valToInject !== undefined && valToInject !== '' && config.node_id && config.field) {
             const pathParts = config.field.split('/');
             let current = finalWorkflow[config.node_id];
@@ -130,44 +152,40 @@ export default function ComfyUIEngineNode(props: NodeProps) {
         });
       }
 
-      const res = await apiClient.post('/generate', {
+      await apiClient.post('/generate', {
         api_key_id: selectedKeyId,
         provider: selectedProvider,
         model: 'comfyui-workflow',
         type: 'image',
-        prompt: JSON.stringify(finalWorkflow)
+        prompt: JSON.stringify(finalWorkflow),
+        params: { client_id: id }
       });
 
-      message.success('物理节点渲染成功！');
-      updateNodeData(id, { ...data, result: res.data });
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '执行失败');
-    } finally {
+      message.error(error.response?.data?.detail || '投递失败');
       setIsRunning(false);
+      setProgressMsg('');
     }
   };
 
-  // 🌟 核心升级：智能判断媒体类型进行资产固化
   const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
       const contentStr = String(data.result.content);
-      // 判断是否是视频
       const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
-      const assetType = isVideo ? 'video' : 'image';
 
       await apiClient.post('/assets/', {
         name: `${isVideo ? '🎬' : '🖼️'} 物理机渲染产物...`,
-        type: assetType,
+        type: isVideo ? 'video' : 'image',
         data: { file_path: contentStr, url: contentStr, content: contentStr },
-        tags: ['ComfyUI_Rendered', selectedProvider || ''],
-        thumbnail: isVideo ? undefined : contentStr, // 视频暂不直接保存略缩图字段
+        tags: ['ComfyUI_Rendered'],
+        thumbnail: isVideo ? undefined : contentStr,
         project_id: projectId ? Number(projectId) : null
       });
-      message.success(`产物已固化到当前项目的[${isVideo ? '视频' : '图片'}]库！`);
+      message.success(`已固化到当前项目！`);
     } catch (error: any) {
-      message.error(`入库失败: ${error.response?.data?.detail}`);
+      message.error(`入库失败`);
     } finally {
       setSavingAsset(false);
     }
@@ -176,7 +194,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const renderParameterHandles = () => {
     if (!parameters) return null;
     return Object.keys(parameters).map((paramName, index) => (
-      <Tooltip key={paramName} title={`接收传入数据: ${paramName}`} placement="left">
+      <Tooltip key={paramName} title={`接收: ${paramName}`} placement="left">
         <Handle type="target" position={Position.Left} id={`param-${paramName}`} style={{ top: 120 + (index * 42), background: '#10b981', width: 10, height: 10 }} />
       </Tooltip>
     ));
@@ -213,7 +231,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           </div>
 
           <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun} style={{ flexShrink: 0, height: 32, fontWeight: 'bold' }}>
-            {isRunning ? 'GPU 渲染中...' : '提交给引擎'}
+            {isRunning ? '任务执行中...' : '提交给引擎'}
           </Button>
 
           <div className="nodrag" style={{ marginTop: 2, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>
@@ -221,7 +239,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
               <Text style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>&gt; GPU_OUTPUT</Text>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {data.result?.content && (
-                  <Tooltip title="固化渲染图/视频到资产库">
+                  <Tooltip title="固化到资产库">
                     <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                   </Tooltip>
                 )}
@@ -229,23 +247,21 @@ export default function ComfyUIEngineNode(props: NodeProps) {
               </div>
             </div>
             {showPreview && (
-              <div style={{ minHeight: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden' }}>
+              <div style={{ minHeight: 40, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden', padding: isRunning ? 12 : 0 }}>
                 {isRunning ? (
-                  <Spin size="small" style={{ margin: '8px 0' }} />
+                  <>
+                    <Spin size="small" style={{ marginBottom: 8 }} />
+                    <Text type="secondary" style={{ fontSize: 11, fontWeight: 'bold', color: '#10b981' }}>{progressMsg}</Text>
+                  </>
                 ) : data.result?.content ? (
                   (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
-
-                    // 🌟 核心升级：智能判断如果是视频，则渲染 <video> 标签，支持循环自动播放！
                     data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
                       <video src={data.result.content} controls autoPlay loop muted style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} />
                     ) : (
-                      <img src={data.result.content} style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} alt="Generated Preview" />
+                      <img src={data.result.content} style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} alt="Preview" />
                     )
-
                   ) : (
-                    <div style={{ padding: 8, maxHeight: 80, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>
-                      {data.result.content}
-                    </div>
+                    <div style={{ padding: 8, maxHeight: 80, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>{data.result.content}</div>
                   )
                 ) : (
                   <Text type="secondary" style={{ fontSize: 10, padding: '8px 0' }}>[ 等待物理机回传... ]</Text>

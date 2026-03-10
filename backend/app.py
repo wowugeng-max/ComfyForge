@@ -27,6 +27,9 @@ from backend.api import assets, projects, keys, suggestions, recommendation_rule
 from backend.models.api_key import APIKey
 from backend.models.provider import Provider  # 🌟 Phase 9: 引入提供商配置底座
 
+from fastapi import WebSocket, WebSocketDisconnect, BackgroundTasks
+from backend.core.ws import manager
+
 # 任务存储（临时，后续会用数据库）
 tasks = {}
 
@@ -103,6 +106,8 @@ class GenerateRequest(BaseModel):
     model: str
     type: str  # 'image', 'video', 'prompt', 'text'
     prompt: str
+    image_url: Optional[str] = None  # 🌟 补齐：接收前端传来的垫图/参考图
+    messages: Optional[list] = None  # 🌟 补齐：接收前端传来的多轮对话或大模型格式消息
     params: Optional[Dict[str, Any]] = {}
 
 
@@ -204,12 +209,34 @@ async def get_file(file_path: str):
     return FileResponse(full_path)
 
 
-# backend/app.py (最底部的 generate 路由)
+# --- 5. 🌟 新增：WebSocket 挂载路由 ---
+@app.websocket("/api/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            # 保持连接存活，接收前端可能发来的 ping
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(client_id)
 
-# --- 5. 🌟 全新的配置驱动生成路由 (万物皆配置终极枢纽) ---
+# --- 🌟 新增：后台渲染兵工厂 ---
+async def run_adapter_task(adapter, request_params: dict, client_id: str):
+    try:
+        result = await adapter.generate(request_params)
+        # 渲染完成后，通过 WS 把图片/视频结果精准推给对应的画布节点
+        if result.get("success"):
+            await manager.send_message({"type": "result", "data": result}, client_id)
+        else:
+            await manager.send_message({"type": "error", "message": result.get("error", "未知错误")}, client_id)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await manager.send_message({"type": "error", "message": f"引擎底层异常: {str(e)}"}, client_id)
+
+# --- 🌟 升级：全新的配置驱动生成路由 ---
 @app.post("/api/generate")
-async def generate_content(request: GenerateRequest, db: Session = Depends(get_db)):
-    # 1. 鉴权与获取提供商底座
+async def generate_content(request: GenerateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     key_record = db.query(APIKey).filter(APIKey.id == request.api_key_id).first()
     if not key_record or not key_record.is_active:
         raise HTTPException(status_code=400, detail="无效或未启用的 API Key，请检查")
@@ -219,29 +246,35 @@ async def generate_content(request: GenerateRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=400, detail=f"未找到 Provider [{request.provider}] 的运行配置")
 
     try:
-        # 2. 动态加载适配器 (会根据厂商 ID 自动分发给 UniversalProxy 或 ComfyUIAdapter)
         adapter_class = AdapterFactory.get_adapter(provider_record.id, db)
         adapter = adapter_class(provider=provider_record, api_key=key_record)
 
-        # 3. 参数对齐：将前端参数打包为字典，送入 Phase 9 标准引擎
         request_params = {
             "model": request.model,
             "type": request.type,
             "prompt": request.prompt,
         }
+        if request.image_url:
+            request_params["image_url"] = request.image_url
+        if request.messages:
+            request_params["messages"] = request.messages
         if request.params:
             request_params.update(request.params)
 
-        # 4. 点火发射！
-        result = await adapter.generate(request_params)
+        # 🌟 判断：前端是否指明了接收结果的节点 ID
+        client_id = request.params.get("client_id") if request.params else None
 
-        if not result.get("success"):
-            raise HTTPException(status_code=500, detail=result.get("error", "未知生成错误"))
-
-        return result
+        if client_id:
+            # 🚀 WS 异步模式：扔进后台执行，HTTP 接口直接秒回！永不超时！
+            background_tasks.add_task(run_adapter_task, adapter, request_params, client_id)
+            return {"success": True, "message": "任务已投递后台队列"}
+        else:
+            # 兼容旧节点的同步阻塞模式 (例如 LLM 编剧节点)
+            result = await adapter.generate(request_params)
+            if not result.get("success"):
+                raise HTTPException(status_code=500, detail=result.get("error", "未知生成错误"))
+            return result
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"底层算力引擎异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"算力分配异常: {str(e)}")
