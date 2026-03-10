@@ -74,22 +74,32 @@ class ComfyUIAdapter(BaseAdapter):
                             print(f"🎉 [ComfyUI Engine] 渲染完成！")
                             outputs = history_data[prompt_id].get("outputs", {})
 
-                            # 🌟 智能提取最终渲染的图片 URL
-                            image_url = None
+                            # 🌟 智能提取最终渲染的图片或视频 URL
+                            media_url = None
                             for node_id, output in outputs.items():
-                                if "images" in output and len(output["images"]) > 0:
+                                # 1. 优先尝试提取视频 (VHS_VideoCombine 节点通常输出 gifs)
+                                if "gifs" in output and len(output["gifs"]) > 0:
+                                    media_info = output["gifs"][0]
+                                    filename = urllib.parse.quote(media_info.get("filename", ""))
+                                    subfolder = urllib.parse.quote(media_info.get("subfolder", ""))
+                                    folder_type = media_info.get("type", "output")
+                                    media_url = f"{actual_base_url}/view?filename={filename}&subfolder={subfolder}&type={folder_type}"
+                                    req_type = "video"  # 强制覆盖媒体类型为视频
+                                    break
+                                # 2. 如果没有视频，再尝试提取图片 (SaveImage 节点)
+                                elif "images" in output and len(output["images"]) > 0:
                                     img_info = output["images"][0]
                                     filename = urllib.parse.quote(img_info.get("filename", ""))
                                     subfolder = urllib.parse.quote(img_info.get("subfolder", ""))
                                     folder_type = img_info.get("type", "output")
-                                    # 拼装出 ComfyUI 原生看图路由
-                                    image_url = f"{actual_base_url}/view?filename={filename}&subfolder={subfolder}&type={folder_type}"
+                                    media_url = f"{actual_base_url}/view?filename={filename}&subfolder={subfolder}&type={folder_type}"
+                                    req_type = "image"
                                     break
 
                             return {
                                 "success": True,
-                                "type": req_type,
-                                "content": image_url if image_url else str(outputs),
+                                "type": req_type,  # 动态返回媒体类型给前端
+                                "content": media_url if media_url else str(outputs),
                                 "raw_response": history_data[prompt_id]
                             }
 

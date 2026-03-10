@@ -1,6 +1,6 @@
 // frontend-react/src/pages/Providers/index.tsx
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Drawer, Form, Input, Select, Switch, Space, Tag, message, Card, Typography, Tooltip, Popconfirm, Badge, Divider, Row, Col, Statistic, Collapse } from 'antd';
+import { Table, Button, Drawer, Form, Input, Select, Switch, Space, Tag, message, Card, Typography, Tooltip, Popconfirm, Badge, Divider, Row, Col, Statistic, Collapse, Radio } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ApiOutlined, GlobalOutlined, CodeOutlined, ThunderboltOutlined, CheckCircleOutlined, MinusCircleOutlined, SettingOutlined } from '@ant-design/icons';
 import { providerApi, type ProviderData } from '../../api/providers';
 
@@ -436,6 +436,15 @@ export default function ProviderManager() {
           <Divider style={{ margin: '24px 0' }} />
 
           <Title level={5} style={{ marginBottom: 16 }}>协议与全局网关</Title>
+
+          {/* 🌟 核心破案点：把服务类型选项暴露出来！ */}
+          <Form.Item name="service_type" label="核心服务驱动类型" rules={[{ required: true, message: '必须指定算力类型' }]}>
+            <Radio.Group optionType="button" buttonStyle="solid">
+              <Radio value="llm">🤖 AI 大语言/多模态模型</Radio>
+              <Radio value="comfyui">🚀 物理算力引擎 (ComfyUI)</Radio>
+            </Radio.Group>
+          </Form.Item>
+
           <Form.Item name="api_format" label="通信协议规范">
             <Select style={{ width: '100%' }}>
               <Option value="openai_compatible">OpenAI 标准兼容 (V1)</Option>

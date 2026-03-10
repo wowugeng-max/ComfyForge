@@ -20,7 +20,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const { data, id } = props;
   const { id: projectId } = useParams<{ id: string }>();
   const { updateNodeData } = useCanvasStore();
-  const { getEdges, getNodes } = useReactFlow(); // 🌟 用于溯源连线！
+  const { getEdges, getNodes } = useReactFlow();
 
   const [providers, setProviders] = useState<any[]>([]);
   const [keys, setKeys] = useState<any[]>([]);
@@ -99,7 +99,6 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     try {
       let finalWorkflow = JSON.parse(workflowJson);
 
-      // 🌟 连线数据穿透：沿着边找源头数据！
       const edges = getEdges();
       const nodes = getNodes();
       const incomingEdges = edges.filter(e => e.target === id);
@@ -107,9 +106,8 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       if (parameters) {
         Object.keys(parameters).forEach(paramName => {
           const config = parameters[paramName];
-          let valToInject = paramValues[paramName]; // 默认取用户手填的值
+          let valToInject = paramValues[paramName];
 
-          // 逆向追溯有没有连线接在这个参数上
           const connectedEdge = incomingEdges.find(e => e.targetHandle === `param-${paramName}`);
           if (connectedEdge) {
             const sourceNode = nodes.find(n => n.id === connectedEdge.source);
@@ -118,7 +116,6 @@ export default function ComfyUIEngineNode(props: NodeProps) {
             }
           }
 
-          // 深度注入 JSON
           if (valToInject !== undefined && valToInject !== '' && config.node_id && config.field) {
             const pathParts = config.field.split('/');
             let current = finalWorkflow[config.node_id];
@@ -133,7 +130,6 @@ export default function ComfyUIEngineNode(props: NodeProps) {
         });
       }
 
-      // 🌟 核心：去掉了 /generate 后面的斜杠，避免 307 重定向
       const res = await apiClient.post('/generate', {
         api_key_id: selectedKeyId,
         provider: selectedProvider,
@@ -151,20 +147,25 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     }
   };
 
+  // 🌟 核心升级：智能判断媒体类型进行资产固化
   const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
       const contentStr = String(data.result.content);
+      // 判断是否是视频
+      const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
+      const assetType = isVideo ? 'video' : 'image';
+
       await apiClient.post('/assets/', {
-        name: `🖼️ 物理机渲染图...`,
-        type: 'image',
+        name: `${isVideo ? '🎬' : '🖼️'} 物理机渲染产物...`,
+        type: assetType,
         data: { file_path: contentStr, url: contentStr, content: contentStr },
         tags: ['ComfyUI_Rendered', selectedProvider || ''],
-        thumbnail: contentStr,
+        thumbnail: isVideo ? undefined : contentStr, // 视频暂不直接保存略缩图字段
         project_id: projectId ? Number(projectId) : null
       });
-      message.success('成图已固化到当前项目！');
+      message.success(`产物已固化到当前项目的[${isVideo ? '视频' : '图片'}]库！`);
     } catch (error: any) {
       message.error(`入库失败: ${error.response?.data?.detail}`);
     } finally {
@@ -215,13 +216,12 @@ export default function ComfyUIEngineNode(props: NodeProps) {
             {isRunning ? 'GPU 渲染中...' : '提交给引擎'}
           </Button>
 
-          {/* 🌟 复用 AI 大脑节点的预览与保存窗 */}
           <div className="nodrag" style={{ marginTop: 2, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showPreview ? 4 : 0 }}>
               <Text style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>&gt; GPU_OUTPUT</Text>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {data.result?.content && (
-                  <Tooltip title="固化渲染图到资产库">
+                  <Tooltip title="固化渲染图/视频到资产库">
                     <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                   </Tooltip>
                 )}
@@ -233,8 +233,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
                 {isRunning ? (
                   <Spin size="small" style={{ margin: '8px 0' }} />
                 ) : data.result?.content ? (
-                  (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:image'))) ? (
-                    <img src={data.result.content} style={{ width: '100%', objectFit: 'contain' }} alt="Generated Preview" />
+                  (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
+
+                    // 🌟 核心升级：智能判断如果是视频，则渲染 <video> 标签，支持循环自动播放！
+                    data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
+                      <video src={data.result.content} controls autoPlay loop muted style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} />
+                    ) : (
+                      <img src={data.result.content} style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} alt="Generated Preview" />
+                    )
+
                   ) : (
                     <div style={{ padding: 8, maxHeight: 80, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>
                       {data.result.content}

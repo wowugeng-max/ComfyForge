@@ -1,22 +1,8 @@
+// frontend-react/src/pages/Keys/index.tsx
 import React, { useState, useEffect } from 'react';
 import {
-  Table,
-  Button,
-  Space,
-  Tag,
-  message,
-  Popconfirm,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Switch,
-  InputNumber,
-  Typography,
-  Tooltip,
-  Drawer,
-  Checkbox,
-  Spin, Radio
+  Table, Button, Space, Tag, message, Popconfirm, Modal, Form, Input,
+  Select, Switch, InputNumber, Typography, Tooltip, Drawer, Checkbox, Spin, Radio
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined,
@@ -25,15 +11,12 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { keyApi } from '../../api/keys';
-import { modelApi } from '../../api/models'; // 新增导入
+import { modelApi } from '../../api/models';
 import type { APIKey } from '../../types/key';
-import { providerApi } from '../../api/providers'; // 🌟 1. 引入接口
+import { providerApi } from '../../api/providers';
 import { ModelParamEditor } from '../../components/admin/ModelParamEditor';
 
-
-// 🌟 2. 定义功能开关 (设为 true 所有人可见，设为 false 隐藏)
 const ENABLE_ADVANCED_PARAM_EDIT = true;
-const { Option } = Select;
 const { Text } = Typography;
 
 export default function KeyManager() {
@@ -44,23 +27,21 @@ export default function KeyManager() {
   const [dbProviders, setDbProviders] = useState<any[]>([]);
   const [form] = Form.useForm();
 
-  // 🌟 核心魔法：实时监听表单字段的变化
+  // 监听表单字段的变化
   const serviceType = Form.useWatch('service_type', form);
   const provider = Form.useWatch('provider', form);
 
-// 🌟 核心魔法：根据当前选中的大类 (LLM 还是 ComfyUI)，动态过滤数据库下发的提供商！
+  // 获取当前选中的提供商的详细配置信息
+  const selectedProviderObj = dbProviders.find(p => p.id === provider);
+
+  // 动态过滤提供商下拉列表
   const providerOptions = dbProviders
     .filter(p => p.service_type === serviceType)
     .map(p => ({ label: p.display_name, value: p.id }));
 
-  // 2. 动态判断 Base URL 是否可编辑
-  // 规则：中转站 (custom_llm) 或 任何 ComfyUI 算力都可以编辑，官方大模型置灰
-  //const isBaseUrlEditable = provider === 'custom_llm' || serviceType === 'comfyui';
-  // 🌟 听你的！彻底解开封印：所有类型都允许填写自定义 URL（以支持透明反代）
-  const isBaseUrlEditable = true;
-
-  // 3. 动态判断 Key 是否必填 (家里的本地 ComfyUI 通常没有密码)
-  const isKeyRequired = provider !== 'local_comfyui';
+  // 🌟 核心修复 1：彻底抛弃硬编码 ID！根据厂商配置的 auth_type 决定是否需要强制输入 Key
+  // 如果后台配置 auth_type 为 'none' (或 'None')，则密码非必填
+  const isKeyRequired = selectedProviderObj ? selectedProviderObj.auth_type?.toLowerCase() !== 'none' : true;
 
   // 监听服务类型切换时，清空下方的提供商选择
   const handleServiceTypeChange = () => {
@@ -70,7 +51,7 @@ export default function KeyManager() {
   const [testLoading, setTestLoading] = useState<number | null>(null);
   const [syncLoading, setSyncLoading] = useState<number | null>(null);
 
-  // ================= 抽屉与模型管理状态 =================
+  // 抽屉与模型管理状态
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [currentKeyForModels, setCurrentKeyForModels] = useState<APIKey | null>(null);
   const [models, setModels] = useState<any[]>([]);
@@ -80,16 +61,13 @@ export default function KeyManager() {
   const [editingModel, setEditingModel] = useState<any | null>(null);
   const [modelForm] = Form.useForm();
   const [testingModel, setTestingModel] = useState<number | null>(null);
-  const [searchText, setSearchText] = useState(''); // 🌟 新增：搜索过滤状态
+  const [searchText, setSearchText] = useState('');
 
-  // 🌟 新增：批量配置弹窗的状态
   const [bulkModalVisible, setBulkModalVisible] = useState(false);
   const [bulkCapability, setBulkCapability] = useState('image');
   const [bulkJsonStr, setBulkJsonStr] = useState('[\n  \n]');
   const [bulkSaving, setBulkSaving] = useState(false);
 
-
-  // 🌟 批量保存逻辑
   const handleBulkSave = async () => {
     try {
       const parsedArray = JSON.parse(bulkJsonStr);
@@ -106,7 +84,7 @@ export default function KeyManager() {
 
       message.success(res.data.message);
       setBulkModalVisible(false);
-      fetchModels(currentKeyForModels!.id); // 刷新列表看结果
+      fetchModels(currentKeyForModels!.id);
     } catch (e: any) {
       if (e instanceof SyntaxError) {
         message.error('JSON 解析失败，请检查语法');
@@ -118,8 +96,6 @@ export default function KeyManager() {
     }
   };
 
-
-  // 🌟 新增：处理单点测试
   const handleTestModel = async (record: any) => {
     setTestingModel(record.id);
     try {
@@ -129,7 +105,6 @@ export default function KeyManager() {
       } else {
         message.warning(res.data.message);
       }
-      // 测试完刷新列表以显示最新状态
       fetchModels(currentKeyForModels!.id);
     } catch (error: any) {
       message.error(error.response?.data?.detail || '测试失败，请检查网络');
@@ -139,7 +114,6 @@ export default function KeyManager() {
     }
   };
 
-  // ================= Key 基础操作 =================
   const fetchKeys = async () => {
     setLoading(true);
     try {
@@ -156,14 +130,14 @@ export default function KeyManager() {
     const fetchProviders = async () => {
       try {
         const res = await providerApi.getAll();
-        setDbProviders(res.data); // 把后端下发的数据存起来
+        setDbProviders(res.data);
       } catch (error) {
         message.error('获取提供商列表失败');
       }
     };
 
     fetchProviders();
-    fetchKeys(); // 这是你原本获取 Key 列表的函数
+    fetchKeys();
   }, []);
 
   const handleSyncModels = async (record: APIKey) => {
@@ -213,7 +187,13 @@ export default function KeyManager() {
     setModalVisible(true);
     setTimeout(() => {
       if (key) {
-        form.setFieldsValue({ ...key, tags: key.tags?.join(', ') });
+        // 如果是编辑，根据现有的 provider 推导出它是 llm 还是 comfyui
+        const keyProviderObj = dbProviders.find(p => p.id === key.provider);
+        form.setFieldsValue({
+          ...key,
+          service_type: keyProviderObj?.service_type || 'llm',
+          tags: key.tags?.join(', ')
+        });
       } else {
         form.resetFields();
       }
@@ -223,9 +203,13 @@ export default function KeyManager() {
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
+
+      // 🌟 核心修复 2：拦截剔除前端辅助字段 service_type，防止污染后端 Payload
+      const { service_type, ...restValues } = values;
+
       const payload = {
-        ...values,
-        tags: values.tags ? values.tags.split(',').map((t: string) => t.trim()) : [],
+        ...restValues,
+        tags: restValues.tags ? restValues.tags.split(',').map((t: string) => t.trim()) : [],
       };
 
       if (editingKey) {
@@ -237,12 +221,16 @@ export default function KeyManager() {
       }
       setModalVisible(false);
       fetchKeys();
-    } catch {
-      message.error('操作失败');
+    } catch (error: any) {
+      // 打印真正的后端校验报错，方便排查
+      if (error.response?.data?.detail) {
+        message.error(`提交失败: ${JSON.stringify(error.response.data.detail)}`);
+      } else {
+        message.error('操作失败');
+      }
     }
   };
 
-  // ================= 模型抽屉操作逻辑 =================
   const openModelDrawer = async (keyRecord: APIKey) => {
     setCurrentKeyForModels(keyRecord);
     setDrawerVisible(true);
@@ -270,7 +258,7 @@ export default function KeyManager() {
         modelForm.setFieldsValue({ ...model, capabilities: caps });
       } else {
         modelForm.resetFields();
-        modelForm.setFieldsValue({ capabilities: ['video'] }); // 新增时默认勾选一个（例如视频）
+        modelForm.setFieldsValue({ capabilities: ['video'] });
       }
     }, 0);
   };
@@ -290,7 +278,7 @@ export default function KeyManager() {
 
       const payload = {
         ...values,
-        provider: currentKeyForModels?.provider, // 继承 Key 的平台
+        provider: currentKeyForModels?.provider,
         api_key_id: currentKeyForModels?.id,
         capabilities: capabilitiesObj,
         is_manual: true,
@@ -322,7 +310,6 @@ export default function KeyManager() {
     }
   };
 
-  // ================= 表格列定义 =================
   const columns: ColumnsType<APIKey> = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
     {
@@ -336,39 +323,44 @@ export default function KeyManager() {
     },
     {
       title: '操作', key: 'action', width: 320,
-      render: (_, record) => (
-        <Space>
-          <Tooltip title="管理该 Key 下的模型 (支持手动添加)">
-            <Button size="small" type="primary" ghost icon={<SettingOutlined />} onClick={() => openModelDrawer(record)}>
-              管理模型
-            </Button>
-          </Tooltip>
+      render: (_, record) => {
+        // 动态判断该 Key 对应的提供商是否属于大模型
+        const recordProviderObj = dbProviders.find(p => p.id === record.provider);
+        const isLLM = recordProviderObj?.service_type === 'llm';
 
-          <Tooltip title="编辑 Key 信息">
-            <Button size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
-          </Tooltip>
-
-{/* 🌟 修复：解除硬编码封印，允许所有 LLM 类型的厂商使用万能同步功能 */}
-          {record.service_type === 'llm' && (
-            <Tooltip title="同步官方/中转站模型列表">
-              <Button size="small" type="dashed" icon={<CloudSyncOutlined />} loading={syncLoading === record.id} onClick={() => handleSyncModels(record)} />
+        return (
+          <Space>
+            <Tooltip title="管理该 Key 下的模型 (支持手动添加)">
+              <Button size="small" type="primary" ghost icon={<SettingOutlined />} onClick={() => openModelDrawer(record)}>
+                管理模型
+              </Button>
             </Tooltip>
-          )}
 
-          <Tooltip title="测试连通性">
-            <Button size="small" icon={<CheckCircleOutlined />} loading={testLoading === record.id} onClick={() => handleTest(record.id)} />
-          </Tooltip>
+            <Tooltip title="编辑 Key 信息">
+              <Button size="small" icon={<EditOutlined />} onClick={() => openModal(record)} />
+            </Tooltip>
 
-          <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
-            <Button size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
+            {/* 只有大模型类型才显示“同步模型”按钮 */}
+            {isLLM && (
+              <Tooltip title="同步官方/中转站模型列表">
+                <Button size="small" type="dashed" icon={<CloudSyncOutlined />} loading={syncLoading === record.id} onClick={() => handleSyncModels(record)} />
+              </Tooltip>
+            )}
+
+            <Tooltip title="测试连通性">
+              <Button size="small" icon={<CheckCircleOutlined />} loading={testLoading === record.id} onClick={() => handleTest(record.id)} />
+            </Tooltip>
+
+            <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 
 const modelColumns = [
-    // 🌟 新增：常用星标列
     {
       title: '常用',
       dataIndex: 'is_favorite',
@@ -379,7 +371,7 @@ const modelColumns = [
           onClick={async () => {
             try {
               await modelApi.toggleFavorite(record.id, !isFav);
-              fetchModels(currentKeyForModels!.id); // 刷新
+              fetchModels(currentKeyForModels!.id);
             } catch (e) {
               message.error("状态切换失败");
             }
@@ -438,25 +430,21 @@ const modelColumns = [
       title: '操作', key: 'action',
       render: (_: any, record: any) => (
         <Space size="middle">
-          {/* 单点测试按钮 */}
           <a onClick={() => handleTestModel(record)}>
             {testingModel === record.id ? <Spin size="small" /> : '单点测试'}
           </a>
 
-          {/* 🌟 核心挂载点：功能开关判断，如果开启则渲染参数配置组件 */}
           {ENABLE_ADVANCED_PARAM_EDIT && (
              <ModelParamEditor
                modelId={record.id}
                modelName={record.model_name}
                initialParams={record.context_ui_params}
-               onSuccess={() => fetchModels(currentKeyForModels!.id)} // 保存成功后刷新模型列表
+               onSuccess={() => fetchModels(currentKeyForModels!.id)}
              />
           )}
 
-{/* 🌟 修复：所有模型（包含同步的）都允许“编辑基础”来修改能力标签 */}
           <a onClick={() => openModelModal(record)}>编辑标签</a>
 
-          {/* 🌟 只有手动添加的模型才允许删除 (官方同步的不能删，如果不用可以禁用) */}
           {record.is_manual && (
             <Popconfirm title="确定删除这个模型吗？" onConfirm={() => handleDeleteModel(record.id)}>
               <a style={{ color: 'red' }}>删除</a>
@@ -466,6 +454,7 @@ const modelColumns = [
       ),
     }
   ];
+
   return (
     <div style={{ padding: '24px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -478,7 +467,6 @@ const modelColumns = [
 
       <Table columns={columns} dataSource={keys} loading={loading} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 1000 }} />
 
-      {/* ================= Key 编辑 Modal ================= */}
       <Modal title={editingKey ? '编辑 API Key' : '添加 API Key'} open={modalVisible} onOk={handleModalOk} onCancel={() => setModalVisible(false)} destroyOnHidden>
         <Form
           form={form}
@@ -486,10 +474,9 @@ const modelColumns = [
           initialValues={{
             is_active: true,
             quota_total: 0,
-            service_type: 'llm' // 默认选大模型
+            service_type: 'llm'
           }}
         >
-          {/* 🌟 新增：服务大类选择 */}
           <Form.Item name="service_type" label="服务大类">
             <Radio.Group onChange={handleServiceTypeChange} optionType="button" buttonStyle="solid">
               <Radio value="llm">🤖 大模型 API</Radio>
@@ -505,30 +492,28 @@ const modelColumns = [
             <Select options={providerOptions} placeholder="请选择平台" />
           </Form.Item>
 
-          {/* 🌟 动态 Base URL 输入框：解开 disabled 限制，优化 placeholder 提示 */}
           <Form.Item
             name="base_url"
             label="自定义网关 (Base URL)"
-            // 只有中转站或 ComfyUI 时才是必填，官方大模型是选填（留空则走官方默认）
-            rules={[{ required: provider === 'custom_llm' || serviceType === 'comfyui', message: '该类型必须填写网关地址' }]}
+            // 如果是 ComfyUI 或者 auth_type 为空，往往是私有部署，必须提供网关
+            rules={[{ required: serviceType === 'comfyui', message: 'ComfyUI 类型必须填写网关地址' }]}
           >
             <Input
               placeholder={
                 serviceType === 'comfyui'
-                  ? '例如: http://127.0.0.1:8188'
-                  : (provider === 'custom_llm'
-                      ? '例如: https://api.proxy.com/v1 (兼容 OpenAI 格式)'
-                      : '选填：透明反代地址。若直连官方请留空')
+                  ? (selectedProviderObj?.default_base_url || '例如: http://127.0.0.1:8188')
+                  : '选填：透明反代地址或中转站地址。若直连官方请留空'
               }
             />
           </Form.Item>
+
           <Form.Item
             name="key"
             label="API Key / Token"
             rules={[{ required: isKeyRequired, message: '请填写 API Key' }]}
           >
             <Input.Password
-              placeholder={isKeyRequired ? "填入 API Key" : "本地算力可留空"}
+              placeholder={isKeyRequired ? "请填入平台颁发的 API Key" : "本地算力平台 (Auth=None) 可留空"}
             />
           </Form.Item>
 
@@ -536,7 +521,6 @@ const modelColumns = [
             <Input placeholder="例如：家里的 5090 / 便宜的中转站" />
           </Form.Item>
 
-          {/* ... 下面的 is_active 和 quota_total 保持你原来的写法即可 ... */}
           <Form.Item name="is_active" label="启用状态" valuePropName="checked">
             <Switch />
           </Form.Item>
@@ -547,21 +531,15 @@ const modelColumns = [
         </Form>
       </Modal>
 
-      {/* ================= 模型管理抽屉 ================= */}
-<Drawer
+      <Drawer
         title={`${currentKeyForModels?.provider || ''} - 模型库管理`}
         width={850}
         onClose={() => setDrawerVisible(false)}
         open={drawerVisible}
         extra={
           <Space>
-            {/* 🌟 批量配置核武器按钮 */}
             {ENABLE_ADVANCED_PARAM_EDIT && (
-              <Button
-                type="dashed"
-                icon={<SettingOutlined />}
-                onClick={() => setBulkModalVisible(true)}
-              >
+              <Button type="dashed" icon={<SettingOutlined />} onClick={() => setBulkModalVisible(true)}>
                 批量参数配置
               </Button>
             )}
@@ -569,7 +547,6 @@ const modelColumns = [
           </Space>
         }
       >
-        {/* 🌟 新增：搜索过滤框 */}
         <div style={{ marginBottom: 16 }}>
           <Input
             prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
@@ -582,7 +559,6 @@ const modelColumns = [
 
         <Table
           columns={modelColumns}
-          // 🌟 修改：使用内存过滤后的数据
           dataSource={models.filter(m =>
             (m.display_name?.toLowerCase().includes(searchText.toLowerCase()) || '') ||
             (m.model_name?.toLowerCase().includes(searchText.toLowerCase()) || '')
@@ -594,7 +570,6 @@ const modelColumns = [
         />
       </Drawer>
 
-      {/* 🌟 批量配置弹窗 */}
       <Modal
         title={`🚀 批量配置参数 (${currentKeyForModels?.provider || ''})`}
         open={bulkModalVisible}
@@ -631,7 +606,6 @@ const modelColumns = [
         </div>
       </Modal>
 
-      {/* ================= 手动添加/编辑模型的表单 Modal ================= */}
       <Modal title={editingModel ? '编辑手动模型' : '手动添加模型'} open={modelModalVisible} onOk={handleModelModalOk} onCancel={() => setModelModalVisible(false)} destroyOnHidden>
         <Form form={modelForm} layout="vertical">
           <Form.Item name="display_name" label="展示名称 (Display Name)" rules={[{ required: true, message: '请输入展示名称' }]}>
