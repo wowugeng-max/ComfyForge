@@ -38,19 +38,29 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
 
-  // 🌟 核心破案点：绝对硬编码直连后端的 8000 端口，彻底绕过前端代理黑洞！
+  // 🌟 终极防弹网络通道：直接从 apiClient 剥取真实地址！绝对同步！
   useEffect(() => {
-    const wsURL = `ws://127.0.0.1:8000/api/ws/${id}`;
-    console.log(`📡 [WS] 正在尝试连接大动脉: ${wsURL}`);
+    // 1. 强行读取 Axios 实例的最终 baseURL
+    const httpBase = apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api';
+
+    // 2. 智能转换协议
+    let wsBase = '';
+    if (httpBase.startsWith('http')) {
+      wsBase = httpBase.replace(/^http/, 'ws');
+    } else {
+      // 如果配的是相对路径 '/api'，则拼接当前域名
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsBase = `${protocol}//${window.location.host}${httpBase}`;
+    }
+
+    const wsURL = `${wsBase.replace(/\/$/, '')}/ws/${id}`;
+    console.log(`📡 [WS] 正在连接大动脉: ${wsURL}`);
 
     const ws = new WebSocket(wsURL);
 
-    ws.onopen = () => {
-      console.log(`🟢 [WS] 大动脉连接成功！画布节点通道 ID: ${id}`);
-    };
+    ws.onopen = () => console.log(`🟢 [WS] 节点通道就绪 ID: ${id}`);
 
     ws.onmessage = (event) => {
-      console.log(`📩 [WS] 接收到心跳包:`, event.data);
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === 'status') {
@@ -65,20 +75,13 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           setIsRunning(false);
           setProgressMsg('');
         }
-      } catch (e) {
-        console.error("❌ [WS] 心跳包解析失败", e);
-      }
+      } catch (e) {}
     };
 
-    ws.onerror = (error) => {
-      console.error(`❌ [WS] 大动脉连接断裂！请检查后端 8000 端口是否存活。`, error);
-    };
-
-    ws.onclose = (e) => {
-      console.log(`🔴 [WS] 大动脉已关闭 (状态码: ${e.code})`);
-    };
+    ws.onerror = (err) => console.error(`❌ [WS] 大动脉连接异常`, err);
 
     return () => {
+      console.log(`🛑 [WS] 卸载节点，断开连接 ID: ${id}`);
       ws.close();
     };
   }, [id, updateNodeData]);
@@ -118,7 +121,6 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     if (!selectedProvider || !selectedKeyId) return message.warning('请选择执行凭证');
     if (!workflowJson.trim()) return message.warning('请拖入工作流或输入JSON');
 
-    // 🌟 清空历史产物，并开启 loading
     updateNodeData(id, { result: null });
     setIsRunning(true);
     setProgressMsg('正在唤醒本地引擎...');
@@ -176,7 +178,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
 
       await apiClient.post('/assets/', {
-        name: `${isVideo ? '🎬' : '🖼️'} 物理机渲染产物...`,
+        name: `${isVideo ? '🎬' : '🖼️'} 物理机产物...`,
         type: isVideo ? 'video' : 'image',
         data: { file_path: contentStr, url: contentStr, content: contentStr },
         tags: ['ComfyUI_Rendered'],

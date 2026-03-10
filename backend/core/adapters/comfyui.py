@@ -8,11 +8,16 @@ from .base import BaseAdapter
 from backend.core.registry import ProviderRegistry
 from backend.models.provider import Provider
 from backend.models.api_key import APIKey
-from backend.core.ws import manager  # 🌟 引入 WS 中枢
+from backend.core.ws import manager
 
 
 @ProviderRegistry.register_adapter("base_comfyui")
 class ComfyUIAdapter(BaseAdapter):
+    """
+    大一统的 ComfyUI 物理引擎适配器
+    设计哲学：绝对的配置驱动。页面配置了什么 URL，就请求什么 URL。不做任何硬编码兜底。
+    """
+
     def __init__(self, provider: Provider, api_key: APIKey = None):
         self.provider = provider
         self.api_key = api_key
@@ -27,15 +32,26 @@ class ComfyUIAdapter(BaseAdapter):
             if client_id:
                 await manager.send_message({"type": "status", "message": text}, client_id)
 
-        base_url = self.api_key.base_url if self.api_key and self.api_key.base_url else self.provider.default_base_url
+        # 🌟 1. 绝对纯粹的寻址逻辑：优先用 Key 的自定义网关，否则用厂商的默认网关
+        base_url = None
+        if self.api_key and self.api_key.base_url:
+            base_url = self.api_key.base_url
+        elif self.provider and self.provider.default_base_url:
+            base_url = self.provider.default_base_url
+
+        # 🌟 2. 拒绝兜底：如果完全没配，直接打回，倒逼用户去页面配置
+        if not base_url:
+            error_msg = f"未配置算力网关！请前往 [凭证管理] 页面正确填写 Base URL。"
+            await notify(f"❌ 启动失败: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+        # 🌟 3. 严格遵循页面配置
+        actual_base_url = str(base_url).strip().rstrip('/')
         api_key_value = self.api_key.key if self.api_key else ""
 
-        if base_url and "runninghub" in str(base_url).lower():
-            is_plus = request_params.get("instanceType") == "plus"
-            proxy_path = "proxy-plus" if is_plus else "proxy"
-            actual_base_url = f"https://www.runninghub.cn/{proxy_path}/{api_key_value}"
-        else:
-            actual_base_url = (base_url or "http://127.0.0.1:8188").rstrip('/')
+        # （仅保留：针对 RunningHub 这种必须把 Key 拼在 URL 路径里的特殊云端中转站做兼容）
+        if "runninghub" in actual_base_url.lower() and api_key_value and not actual_base_url.endswith(api_key_value):
+            actual_base_url = f"{actual_base_url}/{api_key_value}"
 
         prompt_url = f"{actual_base_url}/prompt"
         history_url = f"{actual_base_url}/history"
@@ -49,13 +65,14 @@ class ComfyUIAdapter(BaseAdapter):
 
         payload = {"prompt": actual_workflow}
 
-        await notify("📦 正在向物理引擎发送工作流...")
+        await notify(f"📦 正在连接算力网关: {actual_base_url} ...")
 
         async with httpx.AsyncClient() as client:
             try:
                 print(f"🚀 [ComfyUI Engine] 提交任务至: {prompt_url}")
                 submit_res = await client.post(prompt_url, json=payload, timeout=15.0)
 
+                # 🌟 捕捉 400 错误：机器连上了，但工作流缺节点
                 if submit_res.status_code != 200:
                     error_msg = submit_res.text
                     try:
@@ -68,7 +85,7 @@ class ComfyUIAdapter(BaseAdapter):
                                 error_msg += f" | 缺失/错误节点: {list(error_json.get('node_errors').keys())}"
                     except Exception:
                         pass
-                    return {"success": False, "error": f"物理引擎拒收 (400): {error_msg}"}
+                    return {"success": False, "error": f"引擎拒收 (可能缺插件): {error_msg}"}
 
                 submit_res.raise_for_status()
 
@@ -76,15 +93,13 @@ class ComfyUIAdapter(BaseAdapter):
                 if not prompt_id:
                     return {"success": False, "error": "未能从物理引擎获取到 prompt_id"}
 
-                await notify(f"🔥 GPU 预热完毕！任务 ID {prompt_id[:6]} 开始渲染...")
+                await notify(f"🔥 算力已响应！任务 ID {prompt_id[:6]} 开始渲染...")
 
-                # 🌟 1200次轮询，足以跑 100 分钟的大视频任务
                 for i in range(1200):
                     await asyncio.sleep(5)
 
-                    # 每 10 秒发送一次心跳给前端，安抚用户情绪
                     if i % 2 == 0:
-                        await notify(f"⚡ GPU 疯狂计算中... (已耗时 {i * 5} 秒)")
+                        await notify(f"⚡ GPU 计算中... (已耗时 {i * 5} 秒)")
 
                     history_res = await client.get(f"{history_url}/{prompt_id}", timeout=10.0)
 
@@ -120,6 +135,15 @@ class ComfyUIAdapter(BaseAdapter):
                                 "raw_response": history_data[prompt_id]
                             }
 
-                return {"success": False, "error": "ComfyUI 渲染超时 (已等待超过 100 分钟)"}
+                return {"success": False, "error": "ComfyUI 渲染超时 (已超 100 分钟)"}
+
+            except httpx.ConnectError as ce:
+                # 🌟 捕捉无法连接异常：IP填错、端口没开、或者机器没开机
+                error_str = f"网络通信失败 (请检查网关 {actual_base_url} 是否存活)"
+                await notify(f"❌ {error_str}")
+                return {"success": False, "error": error_str}
             except Exception as e:
-                return {"success": False, "error": f"网络通信异常 (目标: {actual_base_url}): {str(e)}"}
+                # 🌟 捕捉其他异常并直接抛给前端
+                error_str = f"请求异常: {str(e)}"
+                await notify(f"❌ {error_str}")
+                return {"success": False, "error": error_str}
