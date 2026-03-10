@@ -1,10 +1,11 @@
 // frontend-react/src/components/nodes/GenerateNode.tsx
 import React, { useState, useEffect } from 'react';
 import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
+import { useParams } from 'react-router-dom'; // 🌟 引入 useParams
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch } from 'antd';
-import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined, StarFilled } from '@ant-design/icons';
+import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined, StarFilled, SaveOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useCanvasStore } from '../../stores/canvasStore';
 
@@ -31,6 +32,7 @@ const MODALITIES = [
 
 const GenerateNode: React.FC<NodeProps> = (props) => {
   const { id, data, isConnectable } = props;
+  const { id: projectId } = useParams<{ id: string }>(); // 🌟 动态获取当前所处的项目 ID
   const { updateNodeData } = useCanvasStore();
   const { getEdges, getNodes, setNodes } = useReactFlow();
 
@@ -46,6 +48,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const [prompt, setPrompt] = useState<string>(data.prompt || '');
   const [params, setParams] = useState<Record<string, any>>(data.params || {});
   const [generating, setGenerating] = useState(false);
+
+  const [savingAsset, setSavingAsset] = useState(false);
 
   const [selectedRole, setSelectedRole] = useState<string>(data.selectedRole || 'free_agent');
   const [isRoleCollapsed, setIsRoleCollapsed] = useState<boolean>(true);
@@ -139,7 +143,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       const res = await apiClient.request({ url: '/generate', method: 'POST', data: payload });
       message.success('生成成功！');
 
-      // 更新节点数据，保存结果
       updateNodeData(id, { ...data, result: res.data });
 
       const connectedEdges = edges.filter(e => e.source === id);
@@ -156,7 +159,46 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     }
   };
 
-  // 🌟 新增：超级动态参数渲染器，支持全数据类型
+  const handleSaveToAsset = async () => {
+    if (!data.result?.content) return;
+    setSavingAsset(true);
+    try {
+      const contentStr = String(data.result.content);
+
+      let assetType = 'prompt';
+      let assetData: Record<string, any> = { content: contentStr };
+      let thumbnail: string | undefined = undefined;
+
+      if (mode.includes('image') || contentStr.startsWith('http') || contentStr.startsWith('data:image')) {
+        assetType = 'image';
+        assetData = { file_path: contentStr, url: contentStr, content: contentStr };
+        thumbnail = contentStr;
+      } else if (mode.includes('video')) {
+        assetType = 'video';
+        assetData = { file_path: contentStr, url: contentStr, content: contentStr };
+      }
+
+      const briefPrompt = prompt.length > 0 ? prompt.substring(0, 10) : selectedModel;
+      const assetName = `${assetType === 'image' ? '🖼️' : '📝'} ${briefPrompt}...`;
+
+      await apiClient.post('/assets/', {
+        name: assetName,
+        type: assetType,
+        data: assetData,
+        tags: ['AI_Generated', mode, selectedModel],
+        thumbnail: thumbnail,
+        // 🌟 核心修复：归属当前项目，确保项目间的物理隔离
+        project_id: projectId ? Number(projectId) : null
+      });
+
+      message.success('已成功固化到本项目资产库！');
+    } catch (error: any) {
+      message.error(`入库失败: ${error.response?.data?.detail || '网络错误'}`);
+    } finally {
+      setSavingAsset(false);
+    }
+  };
+
   const renderParams = () => {
     const m = allModels.find(i => i.model_name === selectedModel);
     if (!m?.context_ui_params || !m.context_ui_params[mode]) return null;
@@ -169,7 +211,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
             <Text type="secondary">{p.label}</Text>
             {p.type === 'number' && <Text type="secondary">{val}</Text>}
-            {/* 布尔值开关 (如: prompt_extend) */}
             {p.type === 'boolean' && (
               <Switch size="small" checked={!!val} onChange={v => {
                   const newParams = { ...params, [p.name]: v };
@@ -178,7 +219,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             )}
           </div>
 
-          {/* 下拉框 */}
           {p.type === 'select' && (
             <Select className="nodrag" size="small" style={{ width: '100%' }} value={val} options={p.options}
               onChange={v => {
@@ -188,7 +228,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             />
           )}
 
-          {/* 滑动条 */}
           {p.type === 'number' && p.max <= 2 && (
             <Slider className="nodrag" min={p.min} max={p.max} step={p.step} value={val} style={{ margin: '0 8px' }}
               onChange={v => {
@@ -198,7 +237,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             />
           )}
 
-          {/* 大数字输入框 (如: seed) */}
           {p.type === 'number' && p.max > 2 && (
             <InputNumber className="nodrag" size="small" style={{ width: '100%' }} value={val}
               onChange={v => {
@@ -208,7 +246,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             />
           )}
 
-          {/* 纯文本输入框 (如: size 1024*1024) */}
           {(p.type === 'string' || p.type === 'text') && (
             <Input className="nodrag" size="small" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
               onChange={e => {
@@ -285,10 +322,18 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           {loading ? <Spin size="small" /> : (
             <>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Select placeholder="2. 选择 AI 模型" size="small" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => { setSelectedModel(v); const m = allModels.find(i => i.model_name === v); if(m?.context_ui_params && m.context_ui_params[mode]) { const defs:any={}; m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default); setParams(defs); } }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
+                <Select placeholder="2. 选择 AI 模型" size="small" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
+                  setSelectedModel(v);
+                  const m = allModels.find(i => i.model_name === v);
+                  if(m?.context_ui_params && m.context_ui_params[mode]) {
+                    const defs:any={};
+                    m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default);
+                    setParams(defs);
+                  }
+                }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
                 <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} size="small" onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
               </div>
-              {/* 🌟 在这里插入！动态参数面板渲染区 */}
+
               {allModels.find(i => i.model_name === selectedModel)?.context_ui_params?.[mode] && (
                 <div style={{ background: '#f8fafc', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid #e2e8f0', flexShrink: 0 }}>
                   {renderParams()}
@@ -299,11 +344,26 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                 {generating ? 'PROCESSING...' : 'START RENDER'}
               </Button>
 
-              {/* 🌟 结果微型预览窗 (常驻显示，再也不会神秘隐身) */}
               <div className="nodrag" style={{ marginTop: 8, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showPreview ? 4 : 0 }}>
                   <Text style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
-                  <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {data.result?.content && (
+                      <Tooltip title="固化到当前项目资产库">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SaveOutlined />}
+                          loading={savingAsset}
+                          onClick={handleSaveToAsset}
+                          style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }}
+                        />
+                      </Tooltip>
+                    )}
+                    <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+                  </div>
+
                 </div>
                 {showPreview && (
                   <div style={{ minHeight: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden' }}>
