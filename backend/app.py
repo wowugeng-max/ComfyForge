@@ -204,16 +204,44 @@ async def get_file(file_path: str):
     return FileResponse(full_path)
 
 
+# backend/app.py (最底部的 generate 路由)
+
 # --- 5. 🌟 全新的配置驱动生成路由 (万物皆配置终极枢纽) ---
 @app.post("/api/generate")
 async def generate_content(request: GenerateRequest, db: Session = Depends(get_db)):
-    # 1. 获取模型运行的“凭证”与“规则底座”
+    # 1. 鉴权与获取提供商底座
     key_record = db.query(APIKey).filter(APIKey.id == request.api_key_id).first()
     if not key_record or not key_record.is_active:
-        raise HTTPException(status_code=400, detail="无效或未启用的 API Key，请在 Key 管理页面检查")
+        raise HTTPException(status_code=400, detail="无效或未启用的 API Key，请检查")
 
     provider_record = db.query(Provider).filter(Provider.id == request.provider).first()
     if not provider_record:
-        raise HTTPException(status_code=400, detail=f"数据库中未找到 Provider [{request.provider}] 的运行配置")
+        raise HTTPException(status_code=400, detail=f"未找到 Provider [{request.provider}] 的运行配置")
 
-    # 2.
+    try:
+        # 2. 动态加载适配器 (会根据厂商 ID 自动分发给 UniversalProxy 或 ComfyUIAdapter)
+        adapter_class = AdapterFactory.get_adapter(provider_record.id, db)
+        adapter = adapter_class(provider=provider_record, api_key=key_record)
+
+        # 3. 参数对齐：将前端参数打包为字典，送入 Phase 9 标准引擎
+        request_params = {
+            "model": request.model,
+            "type": request.type,
+            "prompt": request.prompt,
+        }
+        if request.params:
+            request_params.update(request.params)
+
+        # 4. 点火发射！
+        result = await adapter.generate(request_params)
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "未知生成错误"))
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"底层算力引擎异常: {str(e)}")
