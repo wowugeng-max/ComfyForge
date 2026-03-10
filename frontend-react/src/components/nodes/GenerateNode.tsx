@@ -156,6 +156,72 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     }
   };
 
+  // 🌟 新增：超级动态参数渲染器，支持全数据类型
+  const renderParams = () => {
+    const m = allModels.find(i => i.model_name === selectedModel);
+    if (!m?.context_ui_params || !m.context_ui_params[mode]) return null;
+
+    return m.context_ui_params[mode].map((p: any) => {
+      const val = params[p.name] !== undefined ? params[p.name] : p.default;
+
+      return (
+        <div key={p.name} style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
+            <Text type="secondary">{p.label}</Text>
+            {p.type === 'number' && <Text type="secondary">{val}</Text>}
+            {/* 布尔值开关 (如: prompt_extend) */}
+            {p.type === 'boolean' && (
+              <Switch size="small" checked={!!val} onChange={v => {
+                  const newParams = { ...params, [p.name]: v };
+                  setParams(newParams); updateNodeData(id, { params: newParams });
+              }} />
+            )}
+          </div>
+
+          {/* 下拉框 */}
+          {p.type === 'select' && (
+            <Select className="nodrag" size="small" style={{ width: '100%' }} value={val} options={p.options}
+              onChange={v => {
+                const newParams = { ...params, [p.name]: v };
+                setParams(newParams); updateNodeData(id, { params: newParams });
+              }}
+            />
+          )}
+
+          {/* 滑动条 */}
+          {p.type === 'number' && p.max <= 2 && (
+            <Slider className="nodrag" min={p.min} max={p.max} step={p.step} value={val} style={{ margin: '0 8px' }}
+              onChange={v => {
+                const newParams = { ...params, [p.name]: v };
+                setParams(newParams); updateNodeData(id, { params: newParams });
+              }}
+            />
+          )}
+
+          {/* 大数字输入框 (如: seed) */}
+          {p.type === 'number' && p.max > 2 && (
+            <InputNumber className="nodrag" size="small" style={{ width: '100%' }} value={val}
+              onChange={v => {
+                const newParams = { ...params, [p.name]: v };
+                setParams(newParams); updateNodeData(id, { params: newParams });
+              }}
+            />
+          )}
+
+          {/* 纯文本输入框 (如: size 1024*1024) */}
+          {(p.type === 'string' || p.type === 'text') && (
+            <Input className="nodrag" size="small" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
+              onChange={e => {
+                const newParams = { ...params, [p.name]: e.target.value };
+                setParams(newParams); updateNodeData(id, { params: newParams });
+              }}
+            />
+          )}
+        </div>
+      );
+    });
+  };
+
   const renderDynamicHandles = () => {
     const handles = [];
     if (isAgentMode) {
@@ -222,6 +288,12 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                 <Select placeholder="2. 选择 AI 模型" size="small" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => { setSelectedModel(v); const m = allModels.find(i => i.model_name === v); if(m?.context_ui_params && m.context_ui_params[mode]) { const defs:any={}; m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default); setParams(defs); } }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
                 <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} size="small" onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
               </div>
+              {/* 🌟 在这里插入！动态参数面板渲染区 */}
+              {allModels.find(i => i.model_name === selectedModel)?.context_ui_params?.[mode] && (
+                <div style={{ background: '#f8fafc', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                  {renderParams()}
+                </div>
+              )}
               <TextArea placeholder="输入指令或连线输入素材..." size="small" rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontFamily: 'monospace', background: '#fff' }} />
               <Button type="primary" size="small" block loading={generating} onClick={handleRun} style={{ marginTop: 'auto', flexShrink: 0, height: 32, fontWeight: 'bold' }}>
                 {generating ? 'PROCESSING...' : 'START RENDER'}

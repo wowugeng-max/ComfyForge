@@ -72,30 +72,37 @@ class UniversalProxyAdapter(BaseAdapter):
 
     def _build_payload(self, request_params: Dict[str, Any], req_type: str, route_config: Union[str, Dict[str, Any]]) -> \
     Dict[str, Any]:
-        # 1. DSL 渲染 (如果配了)
+        # 1. 🌟 DSL 模式：将所有动态参数无缝注入上下文
         if isinstance(route_config, dict) and "payload_template" in route_config:
-            context = {
-                "model": request_params.get("model"),
-                "prompt": request_params.get("prompt", ""),
-                "image_url": request_params.get("image_url"),
-                "size": request_params.get("size", "1024x1024"),
-                "messages": request_params.get("messages")
-            }
+            # 复制所有的请求参数作为上下文（包含了 seed, size, prompt_extend 等所有你在前端填的值）
+            context = dict(request_params)
+
+            # 补全可能缺失的基础默认值
+            context.setdefault("size", "1024*1024")
+            if "prompt" not in context:
+                context["prompt"] = ""
+
             return self._render_template(route_config["payload_template"], context)
 
-        # 2. OpenAI 标准组装兜底
-        model_name = request_params.get("model")
-        payload = {"model": model_name}
+        # 2. 🌟 标准 OpenAI 模式兜底：动态合并所有额外参数
+        payload = {}
+
+        # 把所有的额外动态参数 (如 temperature, max_tokens, seed) 全塞进 payload
+        for k, v in request_params.items():
+            if k not in ["type", "image_url", "messages", "prompt", "model"]:
+                payload[k] = v
+
+        payload["model"] = request_params.get("model")
         is_image_or_video = req_type in ["text_to_image", "image_to_image", "text_to_video", "image_to_video", "image",
                                          "video"]
 
         if is_image_or_video:
             payload["prompt"] = request_params.get("prompt", "")
-            if "size" in request_params: payload["size"] = request_params["size"]
-            if "image_url" in request_params: payload["image_url"] = request_params["image_url"]
+            if "image_url" in request_params:
+                payload["image_url"] = request_params["image_url"]
         else:
             messages = request_params.get("messages", [])
-            if not messages and "prompt" in request_params:
+            if not messages and request_params.get("prompt"):
                 messages = [{"role": "user", "content": request_params["prompt"]}]
             payload["messages"] = messages
 
