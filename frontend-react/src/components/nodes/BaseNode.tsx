@@ -10,7 +10,7 @@ const hexToRgba = (hex: string, alpha: number) => {
   let c: any;
   if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
     c = hex.substring(1).split('');
-    if (c.length === 3) c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+    if (c.length === 3) c = [c, c, c, c, c, c];
     c = '0x' + c.join('');
     return `rgba(${[(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',')},${alpha})`;
   }
@@ -19,12 +19,31 @@ const hexToRgba = (hex: string, alpha: number) => {
 
 export const BaseNode = memo((props: NodeProps) => {
   const { id, selected, data, children } = props;
-  const { updateNodeData } = useCanvasStore();
+  const { updateNodeData, nodeRunStatus } = useCanvasStore();
+
+  // 🌟 动态订阅执行状态
+  const status = nodeRunStatus[id] || 'idle';
 
   const nodeColor = data?.customColor || '#0ea5e9';
-  // 🌟 1. 改为纯白毛玻璃底色
   const bgColor = hexToRgba('#ffffff', 0.85);
-  const glowColor = hexToRgba(nodeColor, 0.15); // 降低发光强度
+  let glowColor = hexToRgba(nodeColor, 0.15);
+
+  // 🌟 极客风 UI 状态机融合
+  let borderStyle = selected ? `1px solid ${nodeColor}` : `1px solid rgba(0,0,0,0.08)`;
+  let glowShadow = selected
+    ? `0 0 0 1px ${nodeColor}, 0 4px 20px ${glowColor}`
+    : '0 4px 24px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255,255,255,0.6)';
+
+  if (status === 'running') {
+    borderStyle = `2px solid #0ea5e9`; // 蓝光
+    glowShadow = `0 0 15px rgba(14, 165, 233, 0.6)`;
+  } else if (status === 'success') {
+    borderStyle = `2px solid #10b981`; // 绿光
+    glowShadow = `0 0 15px rgba(16, 185, 129, 0.5)`;
+  } else if (status === 'error') {
+    borderStyle = `2px solid #ef4444`; // 红光
+    glowShadow = `0 0 15px rgba(239, 68, 68, 0.6)`;
+  }
 
   return (
     <>
@@ -40,31 +59,17 @@ export const BaseNode = memo((props: NodeProps) => {
       <div
         className="comfyforge-node-container"
         style={{
-          width: '100%',
-          height: '100%',
-          minWidth: 240,
-          minHeight: 150,
-          background: bgColor,
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          // 🌟 2. 边框和阴影调成清爽的浅灰质感
-          border: selected ? `1px solid ${nodeColor}` : `1px solid rgba(0,0,0,0.08)`,
-          borderRadius: '8px',
-          boxShadow: selected
-            ? `0 0 0 1px ${nodeColor}, 0 4px 20px ${glowColor}`
-            : '0 4px 24px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255,255,255,0.6)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
+          width: '100%', height: '100%', minWidth: 240, minHeight: 150,
+          background: bgColor, backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+          border: borderStyle, borderRadius: '8px', boxShadow: glowShadow,
+          display: 'flex', flexDirection: 'column', overflow: 'hidden', transition: 'all 0.3s ease-in-out'
         }}
       >
         <div className="custom-drag-handle" style={{
           background: `linear-gradient(90deg, ${hexToRgba(nodeColor, 0.1)} 0%, ${hexToRgba(nodeColor, 0.02)} 100%)`,
           padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          borderBottom: `1px solid ${hexToRgba(nodeColor, 0.2)}`, cursor: 'grab',
-          flexShrink: 0
+          borderBottom: `1px solid ${hexToRgba(nodeColor, 0.2)}`, cursor: 'grab', flexShrink: 0
         }}>
-          {/* 🌟 3. 标题文字改为深灰 (Slate 800) */}
           <Text style={{
             fontSize: 12, color: '#1e293b', margin: 0, fontWeight: 800,
             letterSpacing: '1px', fontFamily: '"SF Pro Display", -apple-system, sans-serif', textTransform: 'uppercase'
@@ -85,13 +90,9 @@ export const BaseNode = memo((props: NodeProps) => {
         <div className="nodrag" style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
           <ConfigProvider
             theme={{
-              // 🌟 4. 彻底切回 Ant Design 原生的明亮算法
               algorithm: theme.defaultAlgorithm,
               token: {
-                colorPrimary: nodeColor,
-                colorBgContainer: '#ffffff', // 纯白输入框
-                colorBorder: '#e2e8f0',      // 浅灰边框
-                fontFamily: 'monospace',
+                colorPrimary: nodeColor, colorBgContainer: '#ffffff', colorBorder: '#e2e8f0', fontFamily: 'monospace',
               }
             }}
             getPopupContainer={(triggerNode) => triggerNode ? (triggerNode.parentNode as HTMLElement) || document.body : document.body}

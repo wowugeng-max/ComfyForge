@@ -19,7 +19,8 @@ const { TextArea } = Input;
 export default function ComfyUIEngineNode(props: NodeProps) {
   const { data, id } = props;
   const { id: projectId } = useParams<{ id: string }>();
-  const { updateNodeData } = useCanvasStore();
+  // 🌟 引入状态汇报接口
+  const { updateNodeData, setNodeStatus } = useCanvasStore();
   const { getEdges, getNodes } = useReactFlow();
 
   const [providers, setProviders] = useState<any[]>([]);
@@ -38,27 +39,19 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
 
-  // 🌟 终极防弹网络通道：直接从 apiClient 剥取真实地址！绝对同步！
+  // 🌟 监听引擎起跑信号
   useEffect(() => {
-    // 1. 强行读取 Axios 实例的最终 baseURL
-    const httpBase = apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api';
-
-    // 2. 智能转换协议
-    let wsBase = '';
-    if (httpBase.startsWith('http')) {
-      wsBase = httpBase.replace(/^http/, 'ws');
-    } else {
-      // 如果配的是相对路径 '/api'，则拼接当前域名
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsBase = `${protocol}//${window.location.host}${httpBase}`;
+    if (data._runSignal) {
+      handleRun();
     }
+  }, [data._runSignal]);
 
-    const wsURL = `${wsBase.replace(/\/$/, '')}/ws/${id}`;
-    console.log(`📡 [WS] 正在连接大动脉: ${wsURL}`);
-
+  useEffect(() => {
+    // 使用最稳健的直连模式
+    const wsURL = `ws://127.0.0.1:8000/api/ws/${id}`;
     const ws = new WebSocket(wsURL);
 
-    ws.onopen = () => console.log(`🟢 [WS] 节点通道就绪 ID: ${id}`);
+    ws.onopen = () => { console.log(`🟢 [WS] 大动脉连接成功！画布节点通道 ID: ${id}`); };
 
     ws.onmessage = (event) => {
       try {
@@ -70,21 +63,23 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           updateNodeData(id, { result: payload.data });
           setIsRunning(false);
           setProgressMsg('');
+          setNodeStatus(id, 'success'); // 🌟 汇报成功，触发下一级
         } else if (payload.type === 'error') {
           message.error(payload.message);
           setIsRunning(false);
           setProgressMsg('');
+          setNodeStatus(id, 'error'); // 🌟 汇报失败
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error("❌ [WS] 心跳包解析失败", e);
+      }
     };
 
-    ws.onerror = (err) => console.error(`❌ [WS] 大动脉连接异常`, err);
+    ws.onerror = (error) => { console.error(`❌ [WS] 大动脉连接断裂！`, error); };
+    ws.onclose = () => { ws.close(); };
 
-    return () => {
-      console.log(`🛑 [WS] 卸载节点，断开连接 ID: ${id}`);
-      ws.close();
-    };
-  }, [id, updateNodeData]);
+    return () => ws.close();
+  }, [id, updateNodeData, setNodeStatus]);
 
   const [{ isOver }, drop] = useDrop(() => ({
     accept: DndItemTypes.ASSET,
@@ -118,12 +113,19 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const availableKeys = keys.filter(k => String(k.provider).toLowerCase() === String(selectedProvider).toLowerCase() && k.is_active);
 
   const handleRun = async () => {
-    if (!selectedProvider || !selectedKeyId) return message.warning('请选择执行凭证');
-    if (!workflowJson.trim()) return message.warning('请拖入工作流或输入JSON');
+    if (!selectedProvider || !selectedKeyId) {
+      setNodeStatus(id, 'error');
+      return message.warning('请选择执行凭证');
+    }
+    if (!workflowJson.trim()) {
+      setNodeStatus(id, 'error');
+      return message.warning('请拖入工作流或输入JSON');
+    }
 
     updateNodeData(id, { result: null });
     setIsRunning(true);
     setProgressMsg('正在唤醒本地引擎...');
+    setNodeStatus(id, 'running'); // 🌟 汇报开跑
 
     try {
       let finalWorkflow = JSON.parse(workflowJson);
@@ -155,22 +157,20 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       }
 
       await apiClient.post('/generate', {
-        api_key_id: selectedKeyId,
-        provider: selectedProvider,
-        model: 'comfyui-workflow',
-        type: 'image',
-        prompt: JSON.stringify(finalWorkflow),
-        params: { client_id: id }
+        api_key_id: selectedKeyId, provider: selectedProvider, model: 'comfyui-workflow', type: 'image',
+        prompt: JSON.stringify(finalWorkflow), params: { client_id: id }
       });
+      // 不要在这里 set success，等 WS 推送！
 
     } catch (error: any) {
       message.error(error.response?.data?.detail || '投递失败');
       setIsRunning(false);
       setProgressMsg('');
+      setNodeStatus(id, 'error'); // HTTP 级别阻断
     }
   };
 
-  const handleSaveToAsset = async () => {
+  const handleSaveToAsset = async () => { /* 保持不变 */
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
@@ -178,22 +178,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
 
       await apiClient.post('/assets/', {
-        name: `${isVideo ? '🎬' : '🖼️'} 物理机产物...`,
-        type: isVideo ? 'video' : 'image',
-        data: { file_path: contentStr, url: contentStr, content: contentStr },
-        tags: ['ComfyUI_Rendered'],
-        thumbnail: isVideo ? undefined : contentStr,
-        project_id: projectId ? Number(projectId) : null
+        name: `${isVideo ? '🎬' : '🖼️'} 物理机渲染产物...`, type: isVideo ? 'video' : 'image',
+        data: { file_path: contentStr, url: contentStr, content: contentStr }, tags: ['ComfyUI_Rendered'],
+        thumbnail: isVideo ? undefined : contentStr, project_id: projectId ? Number(projectId) : null
       });
       message.success(`已固化到当前项目！`);
-    } catch (error: any) {
-      message.error(`入库失败`);
-    } finally {
-      setSavingAsset(false);
-    }
+    } catch (error: any) { message.error(`入库失败`); } finally { setSavingAsset(false); }
   };
 
-  const renderParameterHandles = () => {
+  const renderParameterHandles = () => { /* 保持不变 */
     if (!parameters) return null;
     return Object.keys(parameters).map((paramName, index) => (
       <Tooltip key={paramName} title={`接收: ${paramName}`} placement="left">

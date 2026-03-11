@@ -1,7 +1,7 @@
 // frontend-react/src/components/nodes/GenerateNode.tsx
 import React, { useState, useEffect } from 'react';
 import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
-import { useParams } from 'react-router-dom'; // 🌟 引入 useParams
+import { useParams } from 'react-router-dom'; 
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch } from 'antd';
@@ -32,8 +32,9 @@ const MODALITIES = [
 
 const GenerateNode: React.FC<NodeProps> = (props) => {
   const { id, data, isConnectable } = props;
-  const { id: projectId } = useParams<{ id: string }>(); // 🌟 动态获取当前所处的项目 ID
-  const { updateNodeData } = useCanvasStore();
+  const { id: projectId } = useParams<{ id: string }>(); 
+  // 🌟 引入状态汇报接口
+  const { updateNodeData, setNodeStatus } = useCanvasStore();
   const { getEdges, getNodes, setNodes } = useReactFlow();
 
   const [loading, setLoading] = useState(false);
@@ -59,6 +60,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   const isAgentMode = mode === 'chat' || mode === 'vision';
 
+  // 🌟 监听引擎起跑信号
+  useEffect(() => {
+    if (data._runSignal) {
+      handleRun();
+    }
+  }, [data._runSignal]);
+
   useEffect(() => {
     apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => message.error('获取 API Key 失败'));
   }, []);
@@ -83,8 +91,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData]);
 
   const handleRun = async () => {
-    if (!selectedKey || !selectedModel) return message.warning('请完整选择 Key 和 模型');
+    if (!selectedKey || !selectedModel) {
+      setNodeStatus(id, 'error');
+      return message.warning('请完整选择 Key 和 模型');
+    }
+    
     setGenerating(true);
+    setNodeStatus(id, 'running'); // 🌟 汇报开跑
 
     try {
       const edges = getEdges();
@@ -109,7 +122,10 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         }
       });
 
-      if (!finalPromptText && !incomingImage) return message.warning('请输入指令或连接素材节点');
+      if (!finalPromptText && !incomingImage) {
+        setNodeStatus(id, 'error');
+        return message.warning('请输入指令或连接素材节点');
+      }
 
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
       const payload: any = {
@@ -144,6 +160,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       message.success('生成成功！');
 
       updateNodeData(id, { ...data, result: res.data });
+      setNodeStatus(id, 'success'); // 🌟 汇报成功，触发下一级
 
       const connectedEdges = edges.filter(e => e.source === id);
       if (connectedEdges.length > 0) {
@@ -154,17 +171,18 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       }
     } catch (error: any) {
       message.error(`生成报错: ${error.response?.data?.detail || '未知错误'}`);
+      setNodeStatus(id, 'error'); // 🌟 汇报失败，阻断流水线
     } finally {
       setGenerating(false);
     }
   };
 
   const handleSaveToAsset = async () => {
+    // ... 保持原有固化逻辑 ...
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
       const contentStr = String(data.result.content);
-
       let assetType = 'prompt';
       let assetData: Record<string, any> = { content: contentStr };
       let thumbnail: string | undefined = undefined;
@@ -182,24 +200,16 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       const assetName = `${assetType === 'image' ? '🖼️' : '📝'} ${briefPrompt}...`;
 
       await apiClient.post('/assets/', {
-        name: assetName,
-        type: assetType,
-        data: assetData,
-        tags: ['AI_Generated', mode, selectedModel],
-        thumbnail: thumbnail,
-        // 🌟 核心修复：归属当前项目，确保项目间的物理隔离
-        project_id: projectId ? Number(projectId) : null
+        name: assetName, type: assetType, data: assetData, tags: ['AI_Generated', mode, selectedModel],
+        thumbnail: thumbnail, project_id: projectId ? Number(projectId) : null
       });
-
       message.success('已成功固化到本项目资产库！');
     } catch (error: any) {
       message.error(`入库失败: ${error.response?.data?.detail || '网络错误'}`);
-    } finally {
-      setSavingAsset(false);
-    }
+    } finally { setSavingAsset(false); }
   };
 
-  const renderParams = () => {
+  const renderParams = () => { /* 保持原有参数渲染逻辑 */ 
     const m = allModels.find(i => i.model_name === selectedModel);
     if (!m?.context_ui_params || !m.context_ui_params[mode]) return null;
 
@@ -259,7 +269,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     });
   };
 
-  const renderDynamicHandles = () => {
+  const renderDynamicHandles = () => { /* 保持不变 */ 
     const handles = [];
     if (isAgentMode) {
         handles.push(
@@ -291,7 +301,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           {isAgentMode && (
             <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 6, border: isRoleCollapsed ? '1px solid #e2e8f0' : '1px solid #ffd591' }}>
               <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
-                 <Text strong style={{ color: isRoleCollapsed ? '#64748b' : '#d46b08' }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')[1]}</Text>
+                 <Text strong style={{ color: isRoleCollapsed ? '#64748b' : '#d46b08' }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')}</Text>
                  {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10 }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
               </div>
               {!isRoleCollapsed && (

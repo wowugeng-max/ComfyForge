@@ -10,7 +10,8 @@ import { Button, Typography, Space, Tooltip, message, Layout, Tag, Divider, Inpu
 import {
   ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, ClearOutlined, SearchOutlined,
   // 🌟 新增的图标
-  MenuFoldOutlined, MenuUnfoldOutlined, UndoOutlined, RedoOutlined, SyncOutlined, ClockCircleOutlined
+  MenuFoldOutlined, MenuUnfoldOutlined, UndoOutlined, RedoOutlined, SyncOutlined, ClockCircleOutlined,
+  StopOutlined
 } from '@ant-design/icons';
 
 import { projectApi } from '../../api/projects';
@@ -47,22 +48,23 @@ const CanvasWorkspace = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
 
-  // 🌟 从你真实的 Store 中提取需要的方法（包括撤销重做）
+  // 🌟 从你真实的 Store 中提取需要的方法（包括撤销重做和新加的引擎状态）
   const {
     nodes, edges,
     onNodesChange, onEdgesChange, onConnect,
-    addNode, setCanvasData,
-    undo, redo, past, future // 👈 把你写好的历史栈拿出来
+    addNode, setCanvasData, updateNodeData,
+    undo, redo, past, future,
+    // 🌟 DAG 引擎特供
+    isGlobalRunning, setGlobalRunning,
+    nodeRunStatus, setNodeStatus, resetAllNodeStatus
   } = useCanvasStore();
 
   const [projectName, setProjectName] = useState('加载中...');
   const [saving, setSaving] = useState(false);
 
-  // ================= 🌟 新增的三大状态 =================
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true); // 侧边栏开关
-  const [saveMode, setSaveMode] = useState<string>('manual'); // 保存策略
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 防抖计时器
-  // ===================================================
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [saveMode, setSaveMode] = useState<string>('manual');
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [menuConfig, setMenuConfig] = useState<{ x: number, y: number, flowX: number, flowY: number } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -123,7 +125,6 @@ const CanvasWorkspace = () => {
     closeMenu();
   };
 
-  // 🌟 改造保存函数：增加 isSilent 参数用于自动保存
   const handleSave = useCallback(async (isSilent = false) => {
     if (!reactFlowInstance || !id) return;
     setSaving(true);
@@ -137,12 +138,11 @@ const CanvasWorkspace = () => {
     }
   }, [reactFlowInstance, id]);
 
-  // 🌟 保存策略 1：实时保存（防抖 1.5 秒）
   useEffect(() => {
     if (saveMode === 'realtime') {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => {
-        handleSave(true); // 实时静默保存
+        handleSave(true);
       }, 1500);
     }
     return () => {
@@ -150,13 +150,12 @@ const CanvasWorkspace = () => {
     };
   }, [nodes, edges, saveMode, handleSave]);
 
-  // 🌟 保存策略 2：定时保存
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
     if (saveMode.startsWith('auto_')) {
-      const seconds = parseInt(saveMode.split('_')[1], 10);
+      const seconds = parseInt(saveMode.split('_'), 10);
       intervalId = setInterval(() => {
-        handleSave(true); // 定时静默保存
+        handleSave(true);
       }, seconds * 1000);
     }
     return () => {
@@ -164,6 +163,58 @@ const CanvasWorkspace = () => {
     };
   }, [saveMode, handleSave]);
 
+  // ================= 🌟 核心新增：DAG 全局启动器 =================
+  const handleGlobalRun = () => {
+    if (isGlobalRunning) {
+      setGlobalRunning(false);
+      message.info("🛑 全局流水线已急刹车！");
+      return;
+    }
+    if (nodes.length === 0) return message.warning("画布太空了，先添点节点吧！");
+
+    resetAllNodeStatus(nodes);
+    setGlobalRunning(true);
+    message.success("🚀 漫剧工业流水线，启动！");
+  };
+
+  // ================= 🌟 核心大脑：DAG 拓扑自动驱动引擎 =================
+  useEffect(() => {
+    if (!isGlobalRunning) return;
+
+    let allDone = true;
+    let hasRunning = false;
+    let newlyTriggered = false;
+    let hasError = false;
+
+    nodes.forEach((node) => {
+      const status = nodeRunStatus[node.id] || 'idle';
+      if (status === 'error') hasError = true;
+      if (status === 'running') hasRunning = true;
+      if (status !== 'success') allDone = false;
+
+      if (status === 'idle') {
+        const incomingEdges = edges.filter((e) => e.target === node.id);
+        const isReady = incomingEdges.every((e) => nodeRunStatus[e.source] === 'success');
+
+        if (isReady && !hasError) {
+          console.log(`[DAG 引擎] 条件达成，触发节点: ${node.id}`);
+          setNodeStatus(node.id, 'running');
+          updateNodeData(node.id, { _runSignal: Date.now() });
+          newlyTriggered = true;
+        }
+      }
+    });
+
+    if (hasError) {
+      setGlobalRunning(false);
+    } else if (allDone && nodes.length > 0) {
+      setGlobalRunning(false);
+      message.success("✨ 太棒了！全部流水线节点执行完毕！", 3);
+    } else if (!newlyTriggered && !hasRunning && !allDone) {
+      message.error("🚨 检测到死锁或有未连接的节点孤岛，执行强行终止！");
+      setGlobalRunning(false);
+    }
+  }, [isGlobalRunning, nodeRunStatus, nodes, edges, updateNodeData, setNodeStatus, setGlobalRunning]);
 
   const filteredNodes = AVAILABLE_NODES.filter(n => n.label.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -206,7 +257,19 @@ const CanvasWorkspace = () => {
             </Button>
           </div>
 
-          <Button type="default" icon={<PlayCircleOutlined />} style={{ borderColor: '#52c41a', color: '#52c41a' }}>运行全局</Button>
+          <Button
+            icon={isGlobalRunning ? <StopOutlined /> : <PlayCircleOutlined />}
+            onClick={handleGlobalRun}
+            type={isGlobalRunning ? "primary" : "default"}
+            danger={isGlobalRunning}
+            style={
+              isGlobalRunning
+                ? { fontWeight: 'bold', boxShadow: '0 0 10px rgba(255,0,0,0.5)' }
+                : { fontWeight: 'bold', borderColor: '#52c41a', color: '#52c41a' }
+            }
+          >
+            {isGlobalRunning ? '紧急停止' : '运行全局'}
+          </Button>
         </Space>
       </Header>
 
