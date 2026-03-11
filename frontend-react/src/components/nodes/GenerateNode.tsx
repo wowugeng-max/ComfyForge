@@ -1,5 +1,5 @@
 // frontend-react/src/components/nodes/GenerateNode.tsx
-import React, { useState, useEffect, useRef } from 'react'; // 🌟 引入 useRef
+import React, { useState, useEffect, useRef } from 'react';
 import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
 import { useParams } from 'react-router-dom';
 import { BaseNode } from './BaseNode';
@@ -61,7 +61,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   const isAgentMode = mode === 'chat' || mode === 'vision';
 
-  // 🌟 核心修复 1：利用 Ref 制造短期记忆，拦截幽灵刷新
   const prevSignalRef = useRef(data._runSignal);
   useEffect(() => {
     if (data._runSignal && data._runSignal !== prevSignalRef.current) {
@@ -91,6 +90,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           updateNodeData(id, { result: payload.data });
           setNodeStatus(id, 'success');
           message.success('🧠 AI 思考完成！');
+
+          // 🌟 核心修复：重新打通数据瀑布！向下游推流
+          const currentEdges = getEdges();
+          currentEdges.filter(e => e.source === id).forEach(edge => {
+            updateNodeData(edge.target, { incoming_data: payload.data });
+          });
+
         } else if (payload.type === 'error') {
           setGenerating(false);
           setProgressMsg('');
@@ -103,7 +109,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       }
     };
     return () => ws.close();
-  }, [id, updateNodeData, setNodeStatus]);
+  }, [id, updateNodeData, setNodeStatus, getEdges]); // 🌟 依赖阵列加上 getEdges
 
   useEffect(() => {
     apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => {});
@@ -125,7 +131,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   }, [selectedKey, mode]);
 
   useEffect(() => {
-    // 🌟 核心修复 2：兜底存储 provider 字段
     const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
     updateNodeData(id, { api_key_id: selectedKey, mode, model_name: selectedModel, prompt, params, selectedRole, showPreview, provider: selectedProvider });
   }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData, keys]);
@@ -170,7 +175,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         return message.warning('请输入指令或连线素材节点');
       }
 
-      // 提取 Provider 时，优先从 keys 找，找不到就用 data 里兜底保存的
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider || data.provider;
 
       const payload: any = {
@@ -211,7 +215,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     }
   };
 
-  const handleSaveToAsset = async () => { /* 省略原有入库逻辑，保持不变 */
+  const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
@@ -242,7 +246,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     } finally { setSavingAsset(false); }
   };
 
-  const renderParams = () => { /* 保持原样 */
+  const renderParams = () => {
     const m = allModels.find(i => i.model_name === selectedModel);
     if (!m?.context_ui_params || !m.context_ui_params[mode]) return null;
 
@@ -281,7 +285,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     });
   };
 
-  const renderDynamicHandles = () => { /* 保持原样 */
+  const renderDynamicHandles = () => {
     const handles = [];
     if (isAgentMode) {
         handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 20, background: '#fadb14', width: 10, height: 10 }} /></Tooltip>);

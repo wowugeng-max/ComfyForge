@@ -1,5 +1,5 @@
 // frontend-react/src/components/nodes/ComfyUIEngineNode.tsx
-import React, { useState, useEffect, useRef } from 'react'; // 🌟 引入 useRef
+import React, { useState, useEffect, useRef } from 'react';
 import { Handle, Position, type NodeProps, useReactFlow } from 'reactflow';
 import { useParams } from 'react-router-dom';
 import { Select, Input, Button, message, Typography, Tooltip, Space, Spin, Switch } from 'antd';
@@ -20,10 +20,8 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const { data, id } = props;
   const { id: projectId } = useParams<{ id: string }>();
 
-  // 🌟 将原本的解构引入改为精确 Selector 引入，防止状态风暴！
   const updateNodeData = useCanvasStore(state => state.updateNodeData);
   const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
-
   const { getEdges, getNodes } = useReactFlow();
 
   const [providers, setProviders] = useState<any[]>([]);
@@ -40,7 +38,6 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
 
-  // 🌟 核心修复：利用 Ref 制造短期记忆，拦截幽灵刷新
   const prevSignalRef = useRef(data._runSignal);
   useEffect(() => {
     if (data._runSignal && data._runSignal !== prevSignalRef.current) {
@@ -69,6 +66,13 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           setIsRunning(false);
           setProgressMsg('');
           setNodeStatus(id, 'success');
+
+          // 🌟 核心修复：重新打通数据瀑布！向下游推流
+          const currentEdges = getEdges();
+          currentEdges.filter(e => e.source === id).forEach(edge => {
+            updateNodeData(edge.target, { incoming_data: payload.data });
+          });
+
         } else if (payload.type === 'error') {
           message.error(payload.message);
           setIsRunning(false);
@@ -78,7 +82,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       } catch (e) {}
     };
     return () => ws.close();
-  }, [id, updateNodeData, setNodeStatus]);
+  }, [id, updateNodeData, setNodeStatus, getEdges]); // 🌟 依赖阵列加上 getEdges
 
   const [{ isOver }, drop] = useDrop(() => ({
     accept: DndItemTypes.ASSET,
@@ -170,7 +174,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     }
   };
 
-  const handleSaveToAsset = async () => { /* 保持不变 */
+  const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {

@@ -12,7 +12,6 @@ import {
 } from 'reactflow';
 
 interface CanvasState {
-  // ================= 基础画布状态 =================
   nodes: Node[];
   edges: Edge[];
   setNodes: (nodes: Node[]) => void;
@@ -20,20 +19,14 @@ interface CanvasState {
   setCanvasData: (nodes: Node[], edges: Edge[]) => void;
   addNode: (node: Node) => void;
   updateNodeData: (id: string, data: any) => void;
-
-  // ================= React Flow 交互钩子 =================
   onNodesChange: (changes: NodeChange[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (connection: Connection) => void;
-
-  // ================= 历史记录 (撤销/重做引擎) =================
   past: { nodes: Node[]; edges: Edge[] }[];
   future: { nodes: Node[]; edges: Edge[] }[];
   saveHistory: () => void;
   undo: () => void;
   redo: () => void;
-
-  // ================= DAG 全局执行引擎状态 =================
   isGlobalRunning: boolean;
   nodeRunStatus: Record<string, 'idle' | 'running' | 'success' | 'error'>;
   setGlobalRunning: (isRunning: boolean) => void;
@@ -42,18 +35,16 @@ interface CanvasState {
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
-  // 初始化空状态
   nodes: [],
   edges: [],
   past: [],
   future: [],
 
-  // --- 🌟 1. 历史记录中心 ---
   saveHistory: () => {
     const { nodes, edges, past } = get();
     set({
       past: [...past, { nodes, edges }],
-      future: [], // 每次有新动作，必须清空未来的重做记录
+      future: [],
     });
   },
 
@@ -73,7 +64,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   redo: () => {
     const { past, future, nodes, edges } = get();
     if (future.length === 0) return;
-    const next = future; // 🌟 修复：精准提取数组的第一个快照
+    const next = future; // 🌟 保留修复好的
     const newFuture = future.slice(1);
     set({
       nodes: next.nodes,
@@ -83,7 +74,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
-  // --- 🌟 2. 画布交互钩子 ---
   onNodesChange: (changes) => {
     set({ nodes: applyNodeChanges(changes, get().nodes) });
   },
@@ -93,13 +83,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   onConnect: (connection) => {
-    get().saveHistory(); // 连线时记录历史
+    get().saveHistory();
     set({ edges: addEdge(connection, get().edges) });
+
+    // 🌟 智能水管魔法：一连上线，如果上游有存货，瞬间冲刷到下游！
+    const sourceNode = get().nodes.find(n => n.id === connection.source);
+    if (sourceNode) {
+      const fluidData = sourceNode.data.result || sourceNode.data.asset?.data || sourceNode.data.incoming_data;
+      if (fluidData) {
+        get().updateNodeData(connection.target, { incoming_data: fluidData });
+      }
+    }
   },
 
-  // --- 🌟 3. 节点数据操控 ---
   setNodes: (nodes) => set({ nodes }),
-
   setEdges: (edges) => set({ edges }),
 
   setCanvasData: (nodes, edges) => {
@@ -119,7 +116,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
-  // --- 🌟 4. DAG 执行引擎状态机 ---
   isGlobalRunning: false,
   nodeRunStatus: {},
 
