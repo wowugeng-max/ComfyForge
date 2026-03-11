@@ -91,12 +91,10 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           setNodeStatus(id, 'success');
           message.success('🧠 AI 思考完成！');
 
-          // 🌟 核心修复：重新打通数据瀑布！向下游推流
           const currentEdges = getEdges();
           currentEdges.filter(e => e.source === id).forEach(edge => {
             updateNodeData(edge.target, { incoming_data: payload.data });
           });
-
         } else if (payload.type === 'error') {
           setGenerating(false);
           setProgressMsg('');
@@ -109,7 +107,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       }
     };
     return () => ws.close();
-  }, [id, updateNodeData, setNodeStatus, getEdges]); // 🌟 依赖阵列加上 getEdges
+  }, [id, updateNodeData, setNodeStatus, getEdges]);
 
   useEffect(() => {
     apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => {});
@@ -176,14 +174,9 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       }
 
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider || data.provider;
-
       const payload: any = {
-        api_key_id: selectedKey,
-        provider: selectedProvider,
-        model: selectedModel,
-        type: mode,
-        prompt: finalPromptText,
-        params: { ...params, client_id: id }
+        api_key_id: selectedKey, provider: selectedProvider, model: selectedModel,
+        type: mode, prompt: finalPromptText, params: { ...params, client_id: id }
       };
 
       if (incomingImage) payload.image_url = incomingImage;
@@ -195,18 +188,17 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         if (mode === 'vision' && incomingImage) {
           payload.messages.push({
             role: "user",
-            content: [
-              { type: 'text', text: finalPromptText || "描述这张图片" },
-              { type: 'image_url', image_url: { url: incomingImage } }
-            ]
+            content: [{ type: 'text', text: finalPromptText || "描述这张图片" }, { type: 'image_url', image_url: { url: incomingImage } }]
           });
         } else {
           payload.messages.push({ role: "user", content: finalPromptText || "开始执行" });
         }
       }
 
-      await apiClient.request({ url: '/generate', method: 'POST', data: payload });
+      // 🌟 记录溯源数据
+      updateNodeData(id, { _finalSourcePrompt: finalPromptText, _finalSystemPrompt: externalSystemPrompt || SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES].prompt });
 
+      await apiClient.request({ url: '/generate', method: 'POST', data: payload });
     } catch (error: any) {
       message.error(`生成报错: ${error.response?.data?.detail || '未知错误'}`);
       setNodeStatus(id, 'error');
@@ -221,16 +213,25 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     try {
       const contentStr = String(data.result.content);
       let assetType = 'prompt';
-      let assetData: Record<string, any> = { content: contentStr };
+
+      // 🌟 核心：将血统溯源信息一并写入资产库
+      let assetData: Record<string, any> = {
+        content: contentStr,
+        source_model: selectedModel,
+        source_prompt: data._finalSourcePrompt,
+        source_system: data._finalSystemPrompt,
+        source_params: params
+      };
+
       let thumbnail: string | undefined = undefined;
 
       if (mode.includes('image') || contentStr.startsWith('http') || contentStr.startsWith('data:image')) {
         assetType = 'image';
-        assetData = { file_path: contentStr, url: contentStr, content: contentStr };
+        assetData = { ...assetData, file_path: contentStr, url: contentStr };
         thumbnail = contentStr;
       } else if (mode.includes('video')) {
         assetType = 'video';
-        assetData = { file_path: contentStr, url: contentStr, content: contentStr };
+        assetData = { ...assetData, file_path: contentStr, url: contentStr };
       }
 
       const briefPrompt = prompt.length > 0 ? prompt.substring(0, 10) : selectedModel;
@@ -240,7 +241,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         name: assetName, type: assetType, data: assetData, tags: ['AI_Generated', mode, selectedModel],
         thumbnail: thumbnail, project_id: projectId ? Number(projectId) : null
       });
-      message.success('已成功固化到本项目资产库！');
+      message.success('已携带【溯源信息】固化到资产库！');
     } catch (error: any) {
       message.error(`入库失败: ${error.response?.data?.detail || '网络错误'}`);
     } finally { setSavingAsset(false); }
@@ -254,9 +255,9 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       const val = params[p.name] !== undefined ? params[p.name] : p.default;
       return (
         <div key={p.name} style={{ marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
-            <Text type="secondary">{p.label}</Text>
-            {p.type === 'number' && <Text type="secondary">{val}</Text>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, alignItems: 'center' }}>
+            <Text type="secondary" style={{ color: '#475569', fontWeight: 500 }}>{p.label}</Text>
+            {p.type === 'number' && <Text type="secondary" style={{ color: '#1890ff', fontWeight: 'bold' }}>{val}</Text>}
             {p.type === 'boolean' && (
               <Switch size="small" checked={!!val} onChange={v => {
                   const newParams = { ...params, [p.name]: v };
@@ -265,7 +266,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             )}
           </div>
           {p.type === 'select' && (
-            <Select className="nodrag" size="small" style={{ width: '100%' }} value={val} options={p.options}
+            <Select className="nodrag" size="middle" style={{ width: '100%' }} value={val} options={p.options}
               onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
           {p.type === 'number' && p.max <= 2 && (
@@ -273,11 +274,11 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
               onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
           {p.type === 'number' && p.max > 2 && (
-            <InputNumber className="nodrag" size="small" style={{ width: '100%' }} value={val}
+            <InputNumber className="nodrag" size="middle" style={{ width: '100%' }} value={val}
               onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
           {(p.type === 'string' || p.type === 'text') && (
-            <Input className="nodrag" size="small" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
+            <Input className="nodrag" size="middle" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
               onChange={e => { const newParams = { ...params, [p.name]: e.target.value }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
         </div>
@@ -288,11 +289,11 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const renderDynamicHandles = () => {
     const handles = [];
     if (isAgentMode) {
-        handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 20, background: '#fadb14', width: 10, height: 10 }} /></Tooltip>);
+        handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 30, background: '#fadb14', width: 12, height: 12 }} /></Tooltip>);
     }
-    handles.push(<Tooltip key="text-in" title="输入文本素材" placement="left"><Handle type="target" position={Position.Left} id="text" style={{ top: 50, background: '#52c41a', width: 10, height: 10 }} /></Tooltip>);
+    handles.push(<Tooltip key="text-in" title="输入文本素材" placement="left"><Handle type="target" position={Position.Left} id="text" style={{ top: 70, background: '#52c41a', width: 12, height: 12 }} /></Tooltip>);
     if (mode === 'vision' || mode === 'image_to_image' || mode === 'image_to_video') {
-      handles.push(<Tooltip key="img-in" title="输入参考图片" placement="left"><Handle type="target" position={Position.Left} id="image" style={{ top: 80, background: '#1890ff', width: 10, height: 10 }} /></Tooltip>);
+      handles.push(<Tooltip key="img-in" title="输入参考图片" placement="left"><Handle type="target" position={Position.Left} id="image" style={{ top: 110, background: '#1890ff', width: 12, height: 12 }} /></Tooltip>);
     }
     return handles;
   };
@@ -301,42 +302,44 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     <BaseNode {...props}>
       {renderDynamicHandles()}
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flexShrink: 0 }}>
-          {isAgentMode && (
-            <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 6, border: isRoleCollapsed ? '1px solid #e2e8f0' : '1px solid #ffd591' }}>
-              <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
-                 <Text strong style={{ color: isRoleCollapsed ? '#64748b' : '#d46b08' }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')}</Text>
-                 {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10 }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
-              </div>
-              {!isRoleCollapsed && (
-                 <div style={{ padding: '0 10px 10px 10px' }}>
-                    <Select size="small" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
-                    <div style={{ background: '#fff', padding: 6, borderRadius: 4, border: '1px dashed #ffd591' }}><Text style={{ fontSize: 11, color: '#475569' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text></div>
-                 </div>
-              )}
-            </div>
-          )}
 
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, background: '#f1f5f9', borderRadius: 6, padding: 4, border: '1px solid #e2e8f0' }}>
-              {MODALITIES.map((m) => {
-                const isActive = mode === m.id;
-                return (
-                  <div key={m.id} onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }} style={{ textAlign: 'center', padding: '4px 0', cursor: 'pointer', borderRadius: 4, fontSize: 10, fontWeight: isActive ? 800 : 500, color: isActive ? '#fff' : '#64748b', background: isActive ? '#0ea5e9' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                    {m.icon} <span>{m.label}</span>
+        {/* 区域一：配置区，自适应滚动 */}
+        <div className="nodrag" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingRight: 4, gap: 10, minHeight: 120 }}>
+          <div style={{ flexShrink: 0 }}>
+            {isAgentMode && (
+              <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 8, border: isRoleCollapsed ? '1px solid #cbd5e1' : '1px solid #ffd591' }}>
+                <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
+                  <Text strong style={{ color: isRoleCollapsed ? '#475569' : '#d46b08' }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')}</Text>
+                  {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10 }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
+                </div>
+                {!isRoleCollapsed && (
+                  <div style={{ padding: '0 12px 12px 12px' }}>
+                      <Select size="middle" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
+                      <div style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px dashed #ffd591' }}><Text style={{ fontSize: 13, color: '#475569' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text></div>
                   </div>
-                );
-              })}
+                )}
+              </div>
+            )}
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, background: '#f1f5f9', borderRadius: 8, padding: 6, border: '1px solid #cbd5e1' }}>
+                {MODALITIES.map((m) => {
+                  const isActive = mode === m.id;
+                  return (
+                    <div key={m.id} onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }} style={{ textAlign: 'center', padding: '6px 0', cursor: 'pointer', borderRadius: 6, fontSize: 12, fontWeight: isActive ? 800 : 600, color: isActive ? '#fff' : '#64748b', background: isActive ? '#0ea5e9' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                      {m.icon} <span>{m.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="nodrag" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Select placeholder="1. 选择云端算力" size="small" style={{ width: '100%' }} value={selectedKey || undefined} onChange={v => { setSelectedKey(v); setSelectedModel(''); }} options={keys.map(k => ({ label: `${k.provider} - ${k.description}`, value: k.id }))} />
+          <Select placeholder="1. 选择云端算力" size="middle" style={{ width: '100%', flexShrink: 0 }} value={selectedKey || undefined} onChange={v => { setSelectedKey(v); setSelectedModel(''); }} options={keys.map(k => ({ label: `${k.provider} - ${k.description}`, value: k.id }))} />
           {loading ? <Spin size="small" /> : (
             <>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Select placeholder="2. 选择 AI 模型" size="small" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <Select placeholder="2. 选择 AI 模型" size="middle" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
                   setSelectedModel(v);
                   const m = allModels.find(i => i.model_name === v);
                   if(m?.context_ui_params && m.context_ui_params[mode]) {
@@ -345,60 +348,60 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                     setParams(defs);
                   }
                 }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
-                <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} size="small" onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
+                <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} style={{ height: 32 }} onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
               </div>
 
               {allModels.find(i => i.model_name === selectedModel)?.context_ui_params?.[mode] && (
-                <div style={{ background: '#f8fafc', padding: '8px 8px 0 8px', borderRadius: 6, border: '1px solid #e2e8f0', flexShrink: 0 }}>
+                <div style={{ background: '#f8fafc', padding: '12px 12px 0 12px', borderRadius: 8, border: '1px solid #cbd5e1', flexShrink: 0 }}>
                   {renderParams()}
                 </div>
               )}
-              <TextArea placeholder="输入指令或连线输入素材..." size="small" rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontFamily: 'monospace', background: '#fff' }} />
-              <Button type="primary" size="small" block loading={generating} onClick={handleRun} style={{ marginTop: 'auto', flexShrink: 0, height: 32, fontWeight: 'bold' }}>
-                {generating ? '正在思考...' : '单点运行'}
-              </Button>
-
-              <div className="nodrag" style={{ marginTop: 8, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showPreview ? 4 : 0 }}>
-                  <Text style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
-
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    {data.result?.content && (
-                      <Tooltip title="固化到当前项目资产库">
-                        <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }} />
-                      </Tooltip>
-                    )}
-                    <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
-                  </div>
-
-                </div>
-                {showPreview && (
-                  <div style={{ minHeight: 30, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden', padding: generating ? 12 : 0 }}>
-                    {generating ? (
-                      <>
-                        <Spin size="small" style={{ marginBottom: 8 }} />
-                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 'bold', color: '#10b981' }}>{progressMsg}</Text>
-                      </>
-                    ) : data.result?.content ? (
-                      (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
-                        data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
-                          <video src={data.result.content} controls autoPlay loop muted style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} />
-                        ) : (
-                          <img src={data.result.content} style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} alt="Preview" />
-                        )
-                      ) : (
-                        <div style={{ padding: 8, maxHeight: 150, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>
-                          {data.result.content}
-                        </div>
-                      )
-                    ) : (
-                      <Text type="secondary" style={{ fontSize: 10, padding: '8px 0' }}>[ 等待生成结果... ]</Text>
-                    )}
-                  </div>
-                )}
-              </div>
-
+              <TextArea placeholder="输入指令或连线输入素材..." autoSize={{ minRows: 4, maxRows: 8 }} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontSize: 13, fontFamily: 'monospace', background: '#fff', borderRadius: 8, flexShrink: 0 }} />
             </>
+          )}
+        </div>
+
+        <Button type="primary" block loading={generating} onClick={handleRun} style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}>
+          {generating ? '正在思考...' : '单点运行'}
+        </Button>
+
+        {/* 🌟 区域二：自适应绝对定位预览区 */}
+        <div className="nodrag" style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 600, fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {data.result?.content && (
+                <Tooltip title="携带血统溯源固化到资产库">
+                  <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 18, color: '#0ea5e9', padding: 0, height: 'auto' }} />
+                </Tooltip>
+              )}
+              <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+            </div>
+          </div>
+
+          {showPreview && (
+            <div style={{ flex: 1, position: 'relative', background: '#0f172a', borderRadius: 8, overflow: 'hidden', marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {generating ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <Spin size="default" style={{ marginBottom: 12 }} />
+                  <Text type="secondary" style={{ fontSize: 13, fontWeight: 'bold', color: '#10b981' }}>{progressMsg}</Text>
+                </div>
+              ) : data.result?.content ? (
+                (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
+                  data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
+                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+                  ) : (
+                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} alt="Preview" />
+                  )
+                ) : (
+                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    {data.result.content}
+                  </div>
+                )
+              ) : (
+                <Text type="secondary" style={{ fontSize: 13, color: '#475569' }}>等待生成结果...</Text>
+              )}
+            </div>
           )}
         </div>
       </div>
