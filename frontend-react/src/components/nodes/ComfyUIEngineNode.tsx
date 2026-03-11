@@ -1,5 +1,5 @@
 // frontend-react/src/components/nodes/ComfyUIEngineNode.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // 🌟 引入 useRef
 import { Handle, Position, type NodeProps, useReactFlow } from 'reactflow';
 import { useParams } from 'react-router-dom';
 import { Select, Input, Button, message, Typography, Tooltip, Space, Spin, Switch } from 'antd';
@@ -19,13 +19,15 @@ const { TextArea } = Input;
 export default function ComfyUIEngineNode(props: NodeProps) {
   const { data, id } = props;
   const { id: projectId } = useParams<{ id: string }>();
-  // 🌟 引入状态汇报接口
-  const { updateNodeData, setNodeStatus } = useCanvasStore();
+
+  // 🌟 将原本的解构引入改为精确 Selector 引入，防止状态风暴！
+  const updateNodeData = useCanvasStore(state => state.updateNodeData);
+  const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
+
   const { getEdges, getNodes } = useReactFlow();
 
   const [providers, setProviders] = useState<any[]>([]);
   const [keys, setKeys] = useState<any[]>([]);
-
   const [selectedProvider, setSelectedProvider] = useState<string | null>(data.selectedProvider || null);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(data.selectedKeyId || null);
 
@@ -35,23 +37,26 @@ export default function ComfyUIEngineNode(props: NodeProps) {
 
   const [isRunning, setIsRunning] = useState(false);
   const [progressMsg, setProgressMsg] = useState<string>('');
-
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
 
-  // 🌟 监听引擎起跑信号
+  // 🌟 核心修复：利用 Ref 制造短期记忆，拦截幽灵刷新
+  const prevSignalRef = useRef(data._runSignal);
   useEffect(() => {
-    if (data._runSignal) {
+    if (data._runSignal && data._runSignal !== prevSignalRef.current) {
+      prevSignalRef.current = data._runSignal;
       handleRun();
     }
   }, [data._runSignal]);
 
   useEffect(() => {
-    // 使用最稳健的直连模式
-    const wsURL = `ws://127.0.0.1:8000/api/ws/${id}`;
-    const ws = new WebSocket(wsURL);
+    const httpBase = apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api';
+    let wsBase = httpBase.startsWith('http')
+      ? httpBase.replace(/^http/, 'ws')
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${httpBase}`;
 
-    ws.onopen = () => { console.log(`🟢 [WS] 大动脉连接成功！画布节点通道 ID: ${id}`); };
+    const wsURL = `${wsBase.replace(/\/$/, '')}/ws/${id}`;
+    const ws = new WebSocket(wsURL);
 
     ws.onmessage = (event) => {
       try {
@@ -63,21 +68,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           updateNodeData(id, { result: payload.data });
           setIsRunning(false);
           setProgressMsg('');
-          setNodeStatus(id, 'success'); // 🌟 汇报成功，触发下一级
+          setNodeStatus(id, 'success');
         } else if (payload.type === 'error') {
           message.error(payload.message);
           setIsRunning(false);
           setProgressMsg('');
-          setNodeStatus(id, 'error'); // 🌟 汇报失败
+          setNodeStatus(id, 'error');
         }
-      } catch (e) {
-        console.error("❌ [WS] 心跳包解析失败", e);
-      }
+      } catch (e) {}
     };
-
-    ws.onerror = (error) => { console.error(`❌ [WS] 大动脉连接断裂！`, error); };
-    ws.onclose = () => { ws.close(); };
-
     return () => ws.close();
   }, [id, updateNodeData, setNodeStatus]);
 
@@ -91,12 +90,10 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           let parsedData = typeof rawContent === 'string' ? JSON.parse(rawContent) : rawContent;
           let finalWorkflowObj = parsedData.workflow_json || parsedData;
           let finalParams = parsedData.parameters || null;
-
           const jsonString = JSON.stringify(finalWorkflowObj, null, 2);
           setWorkflowJson(jsonString);
           setParameters(finalParams);
           setParamValues({});
-
           updateNodeData(id, { label: `🚀 ${asset.name}`, workflowJson: jsonString, parameters: finalParams, paramValues: {} });
           message.success(`载入工作流: ${asset.name}`);
         } catch (err) {}
@@ -125,7 +122,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     updateNodeData(id, { result: null });
     setIsRunning(true);
     setProgressMsg('正在唤醒本地引擎...');
-    setNodeStatus(id, 'running'); // 🌟 汇报开跑
+    setNodeStatus(id, 'running');
 
     try {
       let finalWorkflow = JSON.parse(workflowJson);
@@ -138,6 +135,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           const config = parameters[paramName];
           let valToInject = paramValues[paramName];
           const connectedEdge = incomingEdges.find(e => e.targetHandle === `param-${paramName}`);
+
           if (connectedEdge) {
             const sourceNode = nodes.find(n => n.id === connectedEdge.source);
             if (sourceNode) valToInject = sourceNode.data.result?.content || sourceNode.data.asset?.data?.content || sourceNode.data.incoming_data?.content;
@@ -157,16 +155,18 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       }
 
       await apiClient.post('/generate', {
-        api_key_id: selectedKeyId, provider: selectedProvider, model: 'comfyui-workflow', type: 'image',
-        prompt: JSON.stringify(finalWorkflow), params: { client_id: id }
+        api_key_id: selectedKeyId,
+        provider: selectedProvider,
+        model: 'comfyui-workflow',
+        type: 'image',
+        prompt: JSON.stringify(finalWorkflow),
+        params: { client_id: id }
       });
-      // 不要在这里 set success，等 WS 推送！
-
     } catch (error: any) {
       message.error(error.response?.data?.detail || '投递失败');
       setIsRunning(false);
       setProgressMsg('');
-      setNodeStatus(id, 'error'); // HTTP 级别阻断
+      setNodeStatus(id, 'error');
     }
   };
 
@@ -176,17 +176,16 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     try {
       const contentStr = String(data.result.content);
       const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
-
       await apiClient.post('/assets/', {
-        name: `${isVideo ? '🎬' : '🖼️'} 物理机渲染产物...`, type: isVideo ? 'video' : 'image',
+        name: `${isVideo ? '🎬' : '🖼️'} 物理机产物...`, type: isVideo ? 'video' : 'image',
         data: { file_path: contentStr, url: contentStr, content: contentStr }, tags: ['ComfyUI_Rendered'],
         thumbnail: isVideo ? undefined : contentStr, project_id: projectId ? Number(projectId) : null
       });
       message.success(`已固化到当前项目！`);
-    } catch (error: any) { message.error(`入库失败`); } finally { setSavingAsset(false); }
+    } catch (error) { message.error(`入库失败`); } finally { setSavingAsset(false); }
   };
 
-  const renderParameterHandles = () => { /* 保持不变 */
+  const renderParameterHandles = () => {
     if (!parameters) return null;
     return Object.keys(parameters).map((paramName, index) => (
       <Tooltip key={paramName} title={`接收: ${paramName}`} placement="left">
@@ -226,7 +225,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           </div>
 
           <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun} style={{ flexShrink: 0, height: 32, fontWeight: 'bold' }}>
-            {isRunning ? '任务执行中...' : '提交给引擎'}
+            {isRunning ? '任务执行中...' : '单点运行'}
           </Button>
 
           <div className="nodrag" style={{ marginTop: 2, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>

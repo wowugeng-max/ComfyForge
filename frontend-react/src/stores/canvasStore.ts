@@ -1,28 +1,39 @@
-// src/stores/canvasStore.ts
+// frontend-react/src/stores/canvasStore.ts
 import { create } from 'zustand';
-import { type Node, type Edge, applyNodeChanges, applyEdgeChanges } from 'reactflow';
-import type { Connection } from 'reactflow';
-import { produce } from 'immer';
+import {
+  type Node,
+  type Edge,
+  type Connection,
+  type EdgeChange,
+  type NodeChange,
+  addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
+} from 'reactflow';
 
 interface CanvasState {
+  // ================= 基础画布状态 =================
   nodes: Node[];
   edges: Edge[];
-  past: Array<{ nodes: Node[]; edges: Edge[] }>;
-  future: Array<{ nodes: Node[]; edges: Edge[] }>;
-
-  // Actions
-  onNodesChange: (changes: any) => void;
-  onEdgesChange: (changes: any) => void;
-  onConnect: (connection: Connection) => void;
-  addNode: (node: Node) => void;
-  removeNode: (nodeId: string) => void;
-  updateNodeData: (nodeId: string, data: any) => void;
+  setNodes: (nodes: Node[]) => void;
+  setEdges: (edges: Edge[]) => void;
   setCanvasData: (nodes: Node[], edges: Edge[]) => void;
+  addNode: (node: Node) => void;
+  updateNodeData: (id: string, data: any) => void;
+
+  // ================= React Flow 交互钩子 =================
+  onNodesChange: (changes: NodeChange[]) => void;
+  onEdgesChange: (changes: EdgeChange[]) => void;
+  onConnect: (connection: Connection) => void;
+
+  // ================= 历史记录 (撤销/重做引擎) =================
+  past: { nodes: Node[]; edges: Edge[] }[];
+  future: { nodes: Node[]; edges: Edge[] }[];
   saveHistory: () => void;
   undo: () => void;
   redo: () => void;
 
-  // 🌟 新增：DAG 全局执行引擎状态
+  // ================= DAG 全局执行引擎状态 =================
   isGlobalRunning: boolean;
   nodeRunStatus: Record<string, 'idle' | 'running' | 'success' | 'error'>;
   setGlobalRunning: (isRunning: boolean) => void;
@@ -31,120 +42,97 @@ interface CanvasState {
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
+  // 初始化空状态
   nodes: [],
   edges: [],
   past: [],
   future: [],
 
-  setCanvasData: (nodes, edges) => {
-    set({
-      nodes: structuredClone(nodes),
-      edges: structuredClone(edges),
-      past: [],
-      future: []
-    });
-  },
-
+  // --- 🌟 1. 历史记录中心 ---
   saveHistory: () => {
     const { nodes, edges, past } = get();
     set({
-      past: [...past, { nodes: structuredClone(nodes), edges: structuredClone(edges) }],
-      future: [],
+      past: [...past, { nodes, edges }],
+      future: [], // 每次有新动作，必须清空未来的重做记录
     });
-  },
-
-  onNodesChange: (changes) => {
-    set(
-      produce((state: CanvasState) => {
-        state.nodes = applyNodeChanges(changes, state.nodes);
-      })
-    );
-  },
-
-  onEdgesChange: (changes) => {
-    set(
-      produce((state: CanvasState) => {
-        state.edges = applyEdgeChanges(changes, state.edges);
-      })
-    );
-  },
-
-  onConnect: (connection) => {
-    get().saveHistory();
-    set(
-      produce((state: CanvasState) => {
-        state.edges.push({ ...connection, id: `e-${Date.now()}-${Math.random()}` });
-      })
-    );
-  },
-
-  addNode: (node) => {
-    get().saveHistory();
-    set(
-      produce((state: CanvasState) => {
-        state.nodes.push(node);
-      })
-    );
-  },
-
-  removeNode: (nodeId) => {
-    get().saveHistory();
-    set(
-      produce((state: CanvasState) => {
-        state.nodes = state.nodes.filter((n) => n.id !== nodeId);
-        state.edges = state.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-      })
-    );
-  },
-
-  updateNodeData: (nodeId, data) => {
-    // get().saveHistory(); // 注意：如果不需要每次修改参数都进历史栈，这里可以注释掉
-    set(
-      produce((state: CanvasState) => {
-        const node = state.nodes.find((n) => n.id === nodeId);
-        if (node) node.data = { ...node.data, ...data };
-      })
-    );
   },
 
   undo: () => {
     const { past, future, nodes, edges } = get();
     if (past.length === 0) return;
-    const newPast = past.slice(0, -1);
-    const lastState = past[past.length - 1];
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
     set({
+      nodes: previous.nodes,
+      edges: previous.edges,
       past: newPast,
-      future: [{ nodes: structuredClone(nodes), edges: structuredClone(edges) }, ...future],
-      nodes: structuredClone(lastState.nodes),
-      edges: structuredClone(lastState.edges),
+      future: [{ nodes, edges }, ...future],
     });
   },
 
   redo: () => {
-    const { future, past, nodes, edges } = get();
+    const { past, future, nodes, edges } = get();
     if (future.length === 0) return;
+    const next = future; // 🌟 修复：精准提取数组的第一个快照
     const newFuture = future.slice(1);
-    const nextState = future;
     set({
+      nodes: next.nodes,
+      edges: next.edges,
+      past: [...past, { nodes, edges }],
       future: newFuture,
-      past: [...past, { nodes: structuredClone(nodes), edges: structuredClone(edges) }],
-      nodes: structuredClone(nextState.nodes),
-      edges: structuredClone(nextState.edges),
     });
   },
 
-  // ================= 🌟 DAG 引擎实现 =================
+  // --- 🌟 2. 画布交互钩子 ---
+  onNodesChange: (changes) => {
+    set({ nodes: applyNodeChanges(changes, get().nodes) });
+  },
+
+  onEdgesChange: (changes) => {
+    set({ edges: applyEdgeChanges(changes, get().edges) });
+  },
+
+  onConnect: (connection) => {
+    get().saveHistory(); // 连线时记录历史
+    set({ edges: addEdge(connection, get().edges) });
+  },
+
+  // --- 🌟 3. 节点数据操控 ---
+  setNodes: (nodes) => set({ nodes }),
+
+  setEdges: (edges) => set({ edges }),
+
+  setCanvasData: (nodes, edges) => {
+    set({ nodes, edges, past: [], future: [] });
+  },
+
+  addNode: (node) => {
+    get().saveHistory();
+    set({ nodes: [...get().nodes, node] });
+  },
+
+  updateNodeData: (id, data) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) =>
+        node.id === id ? { ...node, data: { ...node.data, ...data } } : node
+      ),
+    }));
+  },
+
+  // --- 🌟 4. DAG 执行引擎状态机 ---
   isGlobalRunning: false,
   nodeRunStatus: {},
+
   setGlobalRunning: (isRunning) => set({ isGlobalRunning: isRunning }),
+
   setNodeStatus: (id, status) =>
     set((state) => ({
       nodeRunStatus: { ...state.nodeRunStatus, [id]: status }
     })),
+
   resetAllNodeStatus: (currentNodes) => {
     const newStatus: Record<string, 'idle' | 'running' | 'success' | 'error'> = {};
     currentNodes.forEach(node => {
-      // 展示节点和输入节点天生即 success，直接放行
       if (node.type === 'loadAsset' || node.type === 'display') {
         newStatus[node.id] = 'success';
       } else {

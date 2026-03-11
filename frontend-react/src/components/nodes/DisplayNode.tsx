@@ -1,142 +1,123 @@
+// frontend-react/src/components/nodes/DisplayNode.tsx
 import React, { useState } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
-import { Typography, Empty, Button, Modal, Input, message, Tooltip } from 'antd';
-import { DesktopOutlined, SaveOutlined, TagsOutlined } from '@ant-design/icons';
+import { Typography, Tooltip, Button, message, Modal, Input } from 'antd';
+import { SaveOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
-import { useAssetLibraryStore } from '../../stores/assetLibraryStore';
 import { useParams } from 'react-router-dom';
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
-const DisplayNode: React.FC<NodeProps> = (props) => {
-  const { data, isConnectable } = props;
-  const { fetchAssets } = useAssetLibraryStore();
-
-  const params = useParams<{ id: string }>();
-  let projectId = params.id;
-  if (!projectId) {
-    const match = window.location.pathname.match(/\/project\/(\d+)/);
-    if (match) projectId = match[1];
-  }
-
-  const displayData = data.incoming_data || data.result;
+export default function DisplayNode(props: NodeProps) {
+  const { data, id } = props;
+  const { id: projectId } = useParams<{ id: string }>();
+  const fetchAssets = useAssetLibraryStore((state) => state.fetchAssets);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [assetName, setAssetName] = useState('');
-  const [assetTags, setAssetTags] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
+  const [savingAsset, setSavingAsset] = useState(false);
 
-  const renderContent = () => {
-    if (!displayData) {
-      return (
-        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', minWidth: 0, minHeight: 0 }}>
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<Text type="secondary" style={{ fontSize: 12 }}>等待上游数据流...</Text>} />
-        </div>
-      );
+  // 🌟 1. 核心修复：智能解析上游传入的数据，防止 Object 直接渲染导致 React 崩溃！
+  let rawData = data.incoming_data || data.result || data.asset?.data || data.content;
+  let displayContent = '';
+  let mediaType = 'text'; // 默认是文本，支持 'image' 和 'video'
+
+  if (rawData !== undefined && rawData !== null) {
+    if (typeof rawData === 'string') {
+      displayContent = rawData;
+      // 简单猜测类型
+      if (displayContent.match(/\.(mp4|webm|mov|gif)(\?|$)/i)) mediaType = 'video';
+      else if (displayContent.match(/\.(jpeg|jpg|png|webp)(\?|$)/i) || displayContent.startsWith('data:image')) mediaType = 'image';
+    } else if (typeof rawData === 'object') {
+      // 🌟 精准剥离：如果是 { content: "...", type: "text" } 这种对象，安全提取 content
+      displayContent = rawData.content || rawData.url || rawData.file_path || JSON.stringify(rawData, null, 2);
+      
+      if (rawData.type === 'video' || (typeof displayContent === 'string' && displayContent.match(/\.(mp4|webm|mov|gif)(\?|$)/i))) {
+        mediaType = 'video';
+      } else if (rawData.type === 'image' || (typeof displayContent === 'string' && (displayContent.match(/\.(jpeg|jpg|png|webp)(\?|$)/i) || displayContent.startsWith('data:image')))) {
+        mediaType = 'image';
+      }
     }
+  }
 
-    switch (displayData.type) {
-      case 'text':
-      case 'chat':
-      case 'prompt':
-        return (
-          <div className="nodrag" style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', background: '#f5f5f5', borderRadius: 6, border: '1px solid #e8e8e8', minWidth: 0, minHeight: 0 }}>
-            <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '13px', lineHeight: '1.6' }}>{displayData.content}</Paragraph>
-          </div>
-        );
-      case 'image':
-        const imgSrc = displayData.content.startsWith('http') || displayData.content.startsWith('data:') ? displayData.content : `data:image/jpeg;base64,${displayData.content}`;
-        return (
-          // 🚀 第 4 层彻底降维：minWidth: 0, minHeight: 0，里面包含 object-fit: contain 的原生图片
-          <div className="nodrag" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#fafafa', padding: 8, borderRadius: 6, overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
-            <img
-              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }}
-              src={imgSrc}
-              alt="AI Generated Image"
-            />
-          </div>
-        );
-      case 'video':
-        const vidSrc = displayData.content.startsWith('http') || displayData.content.startsWith('data:') ? displayData.content : `data:video/mp4;base64,${displayData.content}`;
-        return (
-          // 🚀 第 5 层彻底降维：minWidth: 0, minHeight: 0，里面包含 object-fit: contain 的原生视频
-          <div className="nodrag" style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#000', padding: 4, borderRadius: 6, overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
-            <video controls style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 4 }} src={vidSrc} />
-          </div>
-        );
-      default:
-        return <Text type="danger">不支持的渲染类型: {displayData.type}</Text>;
-    }
-  };
+  // 兜底保障：绝对不能让对象流入 React 渲染树
+  if (typeof displayContent !== 'string') {
+    displayContent = String(displayContent);
+  }
 
-  const handleSaveAsset = async () => {
-    if (!assetName.trim()) return message.warning('请给资产起个名字吧');
-    setIsSaving(true);
+  const handleSaveToAsset = async () => {
+    if (!displayContent) return message.warning('没有可保存的内容');
+    if (!assetName.trim()) return message.warning('请输入资产名称');
+
+    setSavingAsset(true);
     try {
-      let finalType = displayData.type;
-      if (finalType === 'chat' || finalType === 'text') finalType = 'prompt';
-
-      const payload = {
+      await apiClient.post('/assets/', {
         name: assetName,
-        type: finalType,
-        tags: assetTags ? assetTags.split(/[,，]/).map(t => t.trim()).filter(Boolean) : [],
-        data: { content: displayData.content },
+        type: mediaType === 'video' ? 'video' : (mediaType === 'image' ? 'image' : 'prompt'),
+        data: { 
+            content: displayContent, 
+            url: mediaType !== 'text' ? displayContent : undefined,
+            file_path: mediaType !== 'text' ? displayContent : undefined
+        },
+        tags: ['Display_Saved'],
+        thumbnail: mediaType === 'image' ? displayContent : undefined,
         project_id: projectId ? Number(projectId) : null
-      };
-
-      await apiClient.post('/assets/', payload);
-      message.success('🎉 成功沉淀至项目资产库！');
+      });
+      message.success('已保存到资产库');
       setIsModalVisible(false);
       setAssetName('');
-      setAssetTags('');
-      fetchAssets(projectId ? Number(projectId) : undefined);
+      if (projectId) fetchAssets(Number(projectId));
     } catch (error: any) {
-      message.error(`保存失败: ${error.response?.data?.detail || '未知错误'}`);
+      message.error(`保存失败: ${error.response?.data?.detail || error.message}`);
     } finally {
-      setIsSaving(false);
+      setSavingAsset(false);
     }
   };
 
   return (
     <BaseNode {...props}>
-      {/* 🚀 主骨架强制使用 flex + minWidth: 0, minHeight: 0 彻底击溃撑爆限制 */}
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
-        <Handle type="target" position={Position.Left} isConnectable={isConnectable} id="in" style={{ top: '50%', background: '#52c41a', width: 10, height: 10 }} />
-
-        <div style={{ flexShrink: 0, marginBottom: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <DesktopOutlined style={{ color: '#52c41a' }} />
-            <Text strong style={{ color: '#595959' }}>结果展示</Text>
-          </div>
-          {displayData && (
-            <Tooltip title="将此结果固化为资产">
-              <Button type="text" size="small" icon={<SaveOutlined style={{ color: '#1890ff' }} />} onClick={() => setIsModalVisible(true)}>存为资产</Button>
-            </Tooltip>
+      <Handle type="target" position={Position.Left} id="in" style={{ top: '50%', background: '#10b981', width: 10, height: 10 }} />
+      
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
+          <Text type="secondary" style={{ fontSize: 11 }}>接收到的产物：</Text>
+          {displayContent && (
+             <Tooltip title="固化为资产">
+               <Button type="text" size="small" icon={<SaveOutlined />} onClick={() => setIsModalVisible(true)} style={{ color: '#0ea5e9' }} />
+             </Tooltip>
           )}
         </div>
 
-        {/* 🚀 媒体渲染区外壳 */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-            {renderContent()}
+        <div className="nodrag" style={{ flex: 1, background: '#f8fafc', borderRadius: 6, border: '1px dashed #cbd5e1', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 100 }}>
+          {displayContent ? (
+            // 🌟 2. 根据媒体类型智能匹配渲染器
+            mediaType === 'video' ? (
+               <video src={displayContent} controls autoPlay loop muted style={{ maxWidth: '100%', maxHeight: 250, objectFit: 'contain', borderRadius: 4 }} />
+            ) : mediaType === 'image' ? (
+               <img src={displayContent} style={{ maxWidth: '100%', maxHeight: 250, objectFit: 'contain', borderRadius: 4 }} alt="Display" />
+            ) : (
+               <div style={{ padding: 8, width: '100%', maxHeight: 200, overflowY: 'auto', fontSize: 12, color: '#334155', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                 {displayContent}
+               </div>
+            )
+          ) : (
+            <Text type="secondary" style={{ fontSize: 11 }}>等待输入...</Text>
+          )}
         </div>
-
-        <Handle type="source" position={Position.Right} isConnectable={isConnectable} id="out" style={{ top: '50%', background: '#fa8c16', width: 10, height: 10 }} />
       </div>
 
-      <Modal title="💾 固化为资产" open={isModalVisible} onOk={handleSaveAsset} confirmLoading={isSaving} onCancel={() => setIsModalVisible(false)} okText="保存至资产库" width={360}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 16 }}>
-          <Input placeholder="给这个资产起个响亮的名字..." value={assetName} onChange={(e) => setAssetName(e.target.value)} autoFocus />
-          <Input prefix={<TagsOutlined style={{ color: '#bfbfbf' }} />} placeholder="标签 (选填，用逗号分隔)" value={assetTags} onChange={(e) => setAssetTags(e.target.value)} />
-        </div>
+      <Handle type="source" position={Position.Right} id="out" style={{ top: '50%', background: '#fa8c16', width: 10, height: 10 }} />
+
+      <Modal title="保存资产" open={isModalVisible} onOk={handleSaveToAsset} onCancel={() => setIsModalVisible(false)} confirmLoading={savingAsset} okText="保存" cancelText="取消" width={320}>
+        <Input placeholder="给这个资产起个名字吧..." value={assetName} onChange={e => setAssetName(e.target.value)} autoFocus />
       </Modal>
     </BaseNode>
   );
-};
+}
 
 if (!nodeRegistry.get('display')) {
   nodeRegistry.register({ type: 'display', displayName: '📺 结果展示', component: DisplayNode, defaultData: { label: '📺 结果展示' } });
 }
-
-export default DisplayNode;

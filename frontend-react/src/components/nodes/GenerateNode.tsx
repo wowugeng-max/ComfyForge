@@ -1,7 +1,7 @@
 // frontend-react/src/components/nodes/GenerateNode.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // 🌟 引入 useRef
 import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
-import { useParams } from 'react-router-dom'; 
+import { useParams } from 'react-router-dom';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch } from 'antd';
@@ -32,10 +32,11 @@ const MODALITIES = [
 
 const GenerateNode: React.FC<NodeProps> = (props) => {
   const { id, data, isConnectable } = props;
-  const { id: projectId } = useParams<{ id: string }>(); 
-  // 🌟 引入状态汇报接口
-  const { updateNodeData, setNodeStatus } = useCanvasStore();
-  const { getEdges, getNodes, setNodes } = useReactFlow();
+  const { id: projectId } = useParams<{ id: string }>();
+
+  const updateNodeData = useCanvasStore(state => state.updateNodeData);
+  const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
+  const { getEdges, getNodes } = useReactFlow();
 
   const [loading, setLoading] = useState(false);
   const [keys, setKeys] = useState<any[]>([]);
@@ -48,27 +49,64 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const [selectedModel, setSelectedModel] = useState<string>(data.model_name || '');
   const [prompt, setPrompt] = useState<string>(data.prompt || '');
   const [params, setParams] = useState<Record<string, any>>(data.params || {});
-  const [generating, setGenerating] = useState(false);
 
+  const [generating, setGenerating] = useState(false);
+  const [progressMsg, setProgressMsg] = useState<string>('');
   const [savingAsset, setSavingAsset] = useState(false);
 
   const [selectedRole, setSelectedRole] = useState<string>(data.selectedRole || 'free_agent');
   const [isRoleCollapsed, setIsRoleCollapsed] = useState<boolean>(true);
   const [showOnlyFavorites, setShowOnlyFavorites] = useState<boolean>(true);
-
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
 
   const isAgentMode = mode === 'chat' || mode === 'vision';
 
-  // 🌟 监听引擎起跑信号
+  // 🌟 核心修复 1：利用 Ref 制造短期记忆，拦截幽灵刷新
+  const prevSignalRef = useRef(data._runSignal);
   useEffect(() => {
-    if (data._runSignal) {
+    if (data._runSignal && data._runSignal !== prevSignalRef.current) {
+      prevSignalRef.current = data._runSignal;
       handleRun();
     }
   }, [data._runSignal]);
 
   useEffect(() => {
-    apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => message.error('获取 API Key 失败'));
+    let wsURL = '';
+    if (import.meta.env.DEV) {
+      wsURL = `ws://127.0.0.1:8000/api/ws/${id}`;
+    } else {
+      const apiBaseURL = import.meta.env.VITE_API_URL || `${window.location.origin}/api`;
+      wsURL = `${apiBaseURL.replace(/^http/, 'ws').replace(/\/$/, '')}/ws/${id}`;
+    }
+    const ws = new WebSocket(wsURL);
+
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'status') {
+          setProgressMsg(payload.message);
+        } else if (payload.type === 'result') {
+          setGenerating(false);
+          setProgressMsg('');
+          updateNodeData(id, { result: payload.data });
+          setNodeStatus(id, 'success');
+          message.success('🧠 AI 思考完成！');
+        } else if (payload.type === 'error') {
+          setGenerating(false);
+          setProgressMsg('');
+          setNodeStatus(id, 'error');
+          message.error(payload.message);
+        }
+      } catch (e) {
+        setGenerating(false);
+        setNodeStatus(id, 'error');
+      }
+    };
+    return () => ws.close();
+  }, [id, updateNodeData, setNodeStatus]);
+
+  useEffect(() => {
+    apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -87,17 +125,21 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   }, [selectedKey, mode]);
 
   useEffect(() => {
-    updateNodeData(id, { api_key_id: selectedKey, mode, model_name: selectedModel, prompt, params, selectedRole, showPreview });
-  }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData]);
+    // 🌟 核心修复 2：兜底存储 provider 字段
+    const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
+    updateNodeData(id, { api_key_id: selectedKey, mode, model_name: selectedModel, prompt, params, selectedRole, showPreview, provider: selectedProvider });
+  }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData, keys]);
 
   const handleRun = async () => {
     if (!selectedKey || !selectedModel) {
       setNodeStatus(id, 'error');
       return message.warning('请完整选择 Key 和 模型');
     }
-    
+
+    updateNodeData(id, { result: null });
     setGenerating(true);
-    setNodeStatus(id, 'running'); // 🌟 汇报开跑
+    setProgressMsg('正在唤醒云端大脑...');
+    setNodeStatus(id, 'running');
 
     try {
       const edges = getEdges();
@@ -124,17 +166,20 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
       if (!finalPromptText && !incomingImage) {
         setNodeStatus(id, 'error');
-        return message.warning('请输入指令或连接素材节点');
+        setGenerating(false);
+        return message.warning('请输入指令或连线素材节点');
       }
 
-      const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
+      // 提取 Provider 时，优先从 keys 找，找不到就用 data 里兜底保存的
+      const selectedProvider = keys.find(k => k.id === selectedKey)?.provider || data.provider;
+
       const payload: any = {
         api_key_id: selectedKey,
         provider: selectedProvider,
         model: selectedModel,
         type: mode,
         prompt: finalPromptText,
-        params: params
+        params: { ...params, client_id: id }
       };
 
       if (incomingImage) payload.image_url = incomingImage;
@@ -156,29 +201,17 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         }
       }
 
-      const res = await apiClient.request({ url: '/generate', method: 'POST', data: payload });
-      message.success('生成成功！');
+      await apiClient.request({ url: '/generate', method: 'POST', data: payload });
 
-      updateNodeData(id, { ...data, result: res.data });
-      setNodeStatus(id, 'success'); // 🌟 汇报成功，触发下一级
-
-      const connectedEdges = edges.filter(e => e.source === id);
-      if (connectedEdges.length > 0) {
-        setNodes((nds) => nds.map((node) => {
-            if (connectedEdges.find(e => e.target === node.id)) return { ...node, data: { ...node.data, incoming_data: res.data } };
-            return node;
-        }));
-      }
     } catch (error: any) {
       message.error(`生成报错: ${error.response?.data?.detail || '未知错误'}`);
-      setNodeStatus(id, 'error'); // 🌟 汇报失败，阻断流水线
-    } finally {
+      setNodeStatus(id, 'error');
       setGenerating(false);
+      setProgressMsg('');
     }
   };
 
-  const handleSaveToAsset = async () => {
-    // ... 保持原有固化逻辑 ...
+  const handleSaveToAsset = async () => { /* 省略原有入库逻辑，保持不变 */
     if (!data.result?.content) return;
     setSavingAsset(true);
     try {
@@ -209,13 +242,12 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     } finally { setSavingAsset(false); }
   };
 
-  const renderParams = () => { /* 保持原有参数渲染逻辑 */ 
+  const renderParams = () => { /* 保持原样 */
     const m = allModels.find(i => i.model_name === selectedModel);
     if (!m?.context_ui_params || !m.context_ui_params[mode]) return null;
 
     return m.context_ui_params[mode].map((p: any) => {
       const val = params[p.name] !== undefined ? params[p.name] : p.default;
-
       return (
         <div key={p.name} style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4, alignItems: 'center' }}>
@@ -228,67 +260,35 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
               }} />
             )}
           </div>
-
           {p.type === 'select' && (
             <Select className="nodrag" size="small" style={{ width: '100%' }} value={val} options={p.options}
-              onChange={v => {
-                const newParams = { ...params, [p.name]: v };
-                setParams(newParams); updateNodeData(id, { params: newParams });
-              }}
-            />
+              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
-
           {p.type === 'number' && p.max <= 2 && (
             <Slider className="nodrag" min={p.min} max={p.max} step={p.step} value={val} style={{ margin: '0 8px' }}
-              onChange={v => {
-                const newParams = { ...params, [p.name]: v };
-                setParams(newParams); updateNodeData(id, { params: newParams });
-              }}
-            />
+              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
-
           {p.type === 'number' && p.max > 2 && (
             <InputNumber className="nodrag" size="small" style={{ width: '100%' }} value={val}
-              onChange={v => {
-                const newParams = { ...params, [p.name]: v };
-                setParams(newParams); updateNodeData(id, { params: newParams });
-              }}
-            />
+              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
-
           {(p.type === 'string' || p.type === 'text') && (
             <Input className="nodrag" size="small" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
-              onChange={e => {
-                const newParams = { ...params, [p.name]: e.target.value };
-                setParams(newParams); updateNodeData(id, { params: newParams });
-              }}
-            />
+              onChange={e => { const newParams = { ...params, [p.name]: e.target.value }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
           )}
         </div>
       );
     });
   };
 
-  const renderDynamicHandles = () => { /* 保持不变 */ 
+  const renderDynamicHandles = () => { /* 保持原样 */
     const handles = [];
     if (isAgentMode) {
-        handles.push(
-          <Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left">
-            <Handle type="target" position={Position.Left} id="system" style={{ top: 20, background: '#fadb14', width: 10, height: 10 }} />
-          </Tooltip>
-        );
+        handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 20, background: '#fadb14', width: 10, height: 10 }} /></Tooltip>);
     }
-    handles.push(
-      <Tooltip key="text-in" title="输入文本素材" placement="left">
-        <Handle type="target" position={Position.Left} id="text" style={{ top: 50, background: '#52c41a', width: 10, height: 10 }} />
-      </Tooltip>
-    );
+    handles.push(<Tooltip key="text-in" title="输入文本素材" placement="left"><Handle type="target" position={Position.Left} id="text" style={{ top: 50, background: '#52c41a', width: 10, height: 10 }} /></Tooltip>);
     if (mode === 'vision' || mode === 'image_to_image' || mode === 'image_to_video') {
-      handles.push(
-        <Tooltip key="img-in" title="输入参考图片" placement="left">
-          <Handle type="target" position={Position.Left} id="image" style={{ top: 80, background: '#1890ff', width: 10, height: 10 }} />
-        </Tooltip>
-      );
+      handles.push(<Tooltip key="img-in" title="输入参考图片" placement="left"><Handle type="target" position={Position.Left} id="image" style={{ top: 80, background: '#1890ff', width: 10, height: 10 }} /></Tooltip>);
     }
     return handles;
   };
@@ -351,7 +351,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
               )}
               <TextArea placeholder="输入指令或连线输入素材..." size="small" rows={3} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontFamily: 'monospace', background: '#fff' }} />
               <Button type="primary" size="small" block loading={generating} onClick={handleRun} style={{ marginTop: 'auto', flexShrink: 0, height: 32, fontWeight: 'bold' }}>
-                {generating ? 'PROCESSING...' : 'START RENDER'}
+                {generating ? '正在思考...' : '单点运行'}
               </Button>
 
               <div className="nodrag" style={{ marginTop: 8, background: '#f8fafc', padding: 6, borderRadius: 6, border: '1px dashed #cbd5e1', flexShrink: 0 }}>
@@ -361,14 +361,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {data.result?.content && (
                       <Tooltip title="固化到当前项目资产库">
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<SaveOutlined />}
-                          loading={savingAsset}
-                          onClick={handleSaveToAsset}
-                          style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }}
-                        />
+                        <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 14, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                       </Tooltip>
                     )}
                     <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
@@ -376,14 +369,21 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
                 </div>
                 {showPreview && (
-                  <div style={{ minHeight: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden' }}>
+                  <div style={{ minHeight: 30, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#e2e8f0', borderRadius: 4, marginTop: 4, overflow: 'hidden', padding: generating ? 12 : 0 }}>
                     {generating ? (
-                      <Spin size="small" style={{ margin: '8px 0' }} />
+                      <>
+                        <Spin size="small" style={{ marginBottom: 8 }} />
+                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 'bold', color: '#10b981' }}>{progressMsg}</Text>
+                      </>
                     ) : data.result?.content ? (
-                      (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:image'))) ? (
-                        <img src={data.result.content} style={{ width: '100%', objectFit: 'contain' }} alt="Generated Preview" />
+                      (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
+                        data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
+                          <video src={data.result.content} controls autoPlay loop muted style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} />
+                        ) : (
+                          <img src={data.result.content} style={{ width: '100%', objectFit: 'contain', borderRadius: 4 }} alt="Preview" />
+                        )
                       ) : (
-                        <div style={{ padding: 8, maxHeight: 80, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>
+                        <div style={{ padding: 8, maxHeight: 150, overflowY: 'auto', fontSize: 11, color: '#475569', whiteSpace: 'pre-wrap', width: '100%', wordBreak: 'break-all' }}>
                           {data.result.content}
                         </div>
                       )
@@ -402,5 +402,6 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     </BaseNode>
   );
 };
+
 nodeRegistry.register({ type: 'generate', displayName: '🧠 AI 大脑', component: GenerateNode, defaultData: { label: '🧠 AI 大脑' } });
 export default GenerateNode;

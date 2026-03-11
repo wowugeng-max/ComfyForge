@@ -185,7 +185,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(client_id)
+        manager.disconnect(websocket,client_id)
 
 # 2. 真正的后台异步兵工厂 (在这里调用算力引擎)
 async def run_adapter_task(adapter, request_params: dict, client_id: str):
