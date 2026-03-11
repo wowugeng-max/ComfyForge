@@ -20,22 +20,21 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   const { id: projectId } = useParams<{ id: string }>();
 
   const [asset, setAsset] = useState<any>(data.asset || null);
-  // 🌟 将资产内容剥离为可控状态
   const [content, setContent] = useState<string>(data.asset?.data?.content || data.asset?.data?.file_path || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [mediaDims, setMediaDims] = useState<string>('');
 
   useEffect(() => {
     if (data.asset) {
       setAsset(data.asset);
       setContent(data.asset.data?.content || data.asset.data?.file_path || '');
+      setMediaDims('');
     }
   }, [data.asset]);
 
   const [{ isOver }, drop] = useDrop(() => ({
     accept: DndItemTypes.ASSET,
-    drop: (item: { asset: any }) => {
-      handleAssetDrop(item.asset);
-    },
+    drop: (item: { asset: any }) => { handleAssetDrop(item.asset); },
     collect: (monitor) => ({ isOver: monitor.isOver() }),
   }));
 
@@ -50,10 +49,7 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
     setContent(newContent);
-    // 🌟 实时同步给下游
-    if (data.asset) {
-      updateNodeData(id, { asset: { ...data.asset, data: { ...data.asset.data, content: newContent } } });
-    }
+    if (data.asset) updateNodeData(id, { asset: { ...data.asset, data: { ...data.asset.data, content: newContent } } });
   };
 
   const handleSaveAsNewAsset = async () => {
@@ -61,11 +57,9 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     setIsSaving(true);
     try {
       await apiClient.post('/assets/', {
-        name: `${asset?.name || '新资产'} (修改版)`,
-        type: asset?.type || 'prompt',
+        name: `${asset?.name || '新资产'} (修改版)`, type: asset?.type || 'prompt',
         data: { content: content, file_path: asset?.type !== 'prompt' ? content : undefined },
-        tags: ['Modified_Asset'],
-        project_id: projectId ? Number(projectId) : null
+        tags: ['Modified_Asset'], project_id: projectId ? Number(projectId) : null
       });
       message.success('已固化为新资产！');
     } catch (error) { message.error('保存失败'); } finally { setIsSaving(false); }
@@ -90,16 +84,23 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
           )}
         </div>
 
-        {/* 🌟 绝对定位魔法：容器相对定位，内部绝对填充，完美防撑爆 */}
-        <div className="nodrag" style={{ flex: 1, position: 'relative', background: isMedia ? '#0f172a' : '#ffffff', borderRadius: 8, border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden', minHeight: 140 }}>
+        {/* 🌟 核心修改：移除容器的 nodrag，只给文字输入框保留 nodrag + nowheel */}
+        <div style={{ flex: 1, position: 'relative', background: isMedia ? '#0f172a' : '#ffffff', borderRadius: 8, border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden', minHeight: 140 }}>
+          {isMedia && mediaDims && (
+            <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
+              {mediaDims}
+            </div>
+          )}
+
           {isMedia ? (
             asset.type === 'video' || (previewUrl && previewUrl.match(/\.(mp4|webm|mov)(\?|$)/i)) ? (
-              <video src={previewUrl} controls loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+              <video src={previewUrl} controls loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
             ) : (
-              <img src={previewUrl} alt="preview" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+              <img src={previewUrl} alt="preview" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
             )
           ) : (
             <TextArea
+              className="nodrag nowheel" // 🌟 仅在输入框上防拖拽防滚轮缩放
               value={content}
               onChange={handleContentChange}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', resize: 'none', fontSize: 13, color: '#1e293b', fontFamily: 'monospace', borderRadius: 8, border: 'none', padding: 8 }}

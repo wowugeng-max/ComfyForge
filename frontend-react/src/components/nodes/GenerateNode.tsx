@@ -41,6 +41,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const [loading, setLoading] = useState(false);
   const [keys, setKeys] = useState<any[]>([]);
   const [allModels, setAllModels] = useState<any[]>([]);
+  const [mediaDims, setMediaDims] = useState<string>('');
 
   const initialMode = ['chat', 'vision', 'text_to_image', 'image_to_image', 'text_to_video', 'image_to_video'].includes(data.mode) ? data.mode : 'chat';
 
@@ -68,6 +69,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       handleRun();
     }
   }, [data._runSignal]);
+
+  useEffect(() => { setMediaDims(''); }, [data.result?.content]);
 
   useEffect(() => {
     let wsURL = '';
@@ -134,76 +137,42 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData, keys]);
 
   const handleRun = async () => {
-    if (!selectedKey || !selectedModel) {
-      setNodeStatus(id, 'error');
-      return message.warning('请完整选择 Key 和 模型');
-    }
-
+    if (!selectedKey || !selectedModel) { setNodeStatus(id, 'error'); return message.warning('请完整选择 Key 和 模型'); }
     updateNodeData(id, { result: null });
-    setGenerating(true);
-    setProgressMsg('正在唤醒云端大脑...');
-    setNodeStatus(id, 'running');
+    setGenerating(true); setProgressMsg('正在唤醒云端大脑...'); setNodeStatus(id, 'running');
 
     try {
-      const edges = getEdges();
-      const nodes = getNodes();
-      const incomingEdges = edges.filter(e => e.target === id);
-
-      let finalPromptText = prompt;
-      let incomingImage = '';
-      let externalSystemPrompt = '';
+      const edges = getEdges(); const nodes = getNodes(); const incomingEdges = edges.filter(e => e.target === id);
+      let finalPromptText = prompt; let incomingImage = ''; let externalSystemPrompt = '';
 
       incomingEdges.forEach(edge => {
         const sourceNode = nodes.find(n => n.id === edge.source);
         if (sourceNode) {
           const sourceContent = sourceNode.data.result?.content || sourceNode.data.asset?.data?.content || sourceNode.data.asset?.data?.file_path || sourceNode.data.incoming_data?.content;
-          if (edge.targetHandle === 'text' && sourceContent) {
-             finalPromptText = finalPromptText ? `${finalPromptText}\n\n[参考素材]:\n${sourceContent}` : sourceContent;
-          } else if (edge.targetHandle === 'image' && sourceContent && !incomingImage) {
-             incomingImage = sourceContent.startsWith('http') || sourceContent.startsWith('data:') ? sourceContent : `http://localhost:8000/${sourceContent}`;
-          } else if (edge.targetHandle === 'system' && sourceContent) {
-             externalSystemPrompt = sourceContent;
-          }
+          if (edge.targetHandle === 'text' && sourceContent) finalPromptText = finalPromptText ? `${finalPromptText}\n\n[参考素材]:\n${sourceContent}` : sourceContent;
+          else if (edge.targetHandle === 'image' && sourceContent && !incomingImage) incomingImage = sourceContent.startsWith('http') || sourceContent.startsWith('data:') ? sourceContent : `http://localhost:8000/${sourceContent}`;
+          else if (edge.targetHandle === 'system' && sourceContent) externalSystemPrompt = sourceContent;
         }
       });
 
-      if (!finalPromptText && !incomingImage) {
-        setNodeStatus(id, 'error');
-        setGenerating(false);
-        return message.warning('请输入指令或连线素材节点');
-      }
+      if (!finalPromptText && !incomingImage) { setNodeStatus(id, 'error'); setGenerating(false); return message.warning('请输入指令或连线素材节点'); }
 
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider || data.provider;
-      const payload: any = {
-        api_key_id: selectedKey, provider: selectedProvider, model: selectedModel,
-        type: mode, prompt: finalPromptText, params: { ...params, client_id: id }
-      };
-
+      const payload: any = { api_key_id: selectedKey, provider: selectedProvider, model: selectedModel, type: mode, prompt: finalPromptText, params: { ...params, client_id: id } };
       if (incomingImage) payload.image_url = incomingImage;
 
       if (isAgentMode) {
         const activeSystemPrompt = externalSystemPrompt || SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES].prompt;
         payload.messages = [{ role: "system", content: activeSystemPrompt }];
-
-        if (mode === 'vision' && incomingImage) {
-          payload.messages.push({
-            role: "user",
-            content: [{ type: 'text', text: finalPromptText || "描述这张图片" }, { type: 'image_url', image_url: { url: incomingImage } }]
-          });
-        } else {
-          payload.messages.push({ role: "user", content: finalPromptText || "开始执行" });
-        }
+        if (mode === 'vision' && incomingImage) payload.messages.push({ role: "user", content: [{ type: 'text', text: finalPromptText || "描述这张图片" }, { type: 'image_url', image_url: { url: incomingImage } }] });
+        else payload.messages.push({ role: "user", content: finalPromptText || "开始执行" });
       }
 
-      // 🌟 记录溯源数据
       updateNodeData(id, { _finalSourcePrompt: finalPromptText, _finalSystemPrompt: externalSystemPrompt || SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES].prompt });
-
       await apiClient.request({ url: '/generate', method: 'POST', data: payload });
     } catch (error: any) {
       message.error(`生成报错: ${error.response?.data?.detail || '未知错误'}`);
-      setNodeStatus(id, 'error');
-      setGenerating(false);
-      setProgressMsg('');
+      setNodeStatus(id, 'error'); setGenerating(false); setProgressMsg('');
     }
   };
 
@@ -213,38 +182,21 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     try {
       const contentStr = String(data.result.content);
       let assetType = 'prompt';
-
-      // 🌟 核心：将血统溯源信息一并写入资产库
-      let assetData: Record<string, any> = {
-        content: contentStr,
-        source_model: selectedModel,
-        source_prompt: data._finalSourcePrompt,
-        source_system: data._finalSystemPrompt,
-        source_params: params
-      };
-
+      let assetData: Record<string, any> = { content: contentStr, source_model: selectedModel, source_prompt: data._finalSourcePrompt, source_system: data._finalSystemPrompt, source_params: params };
       let thumbnail: string | undefined = undefined;
 
       if (mode.includes('image') || contentStr.startsWith('http') || contentStr.startsWith('data:image')) {
-        assetType = 'image';
-        assetData = { ...assetData, file_path: contentStr, url: contentStr };
-        thumbnail = contentStr;
+        assetType = 'image'; assetData = { ...assetData, file_path: contentStr, url: contentStr }; thumbnail = contentStr;
       } else if (mode.includes('video')) {
-        assetType = 'video';
-        assetData = { ...assetData, file_path: contentStr, url: contentStr };
+        assetType = 'video'; assetData = { ...assetData, file_path: contentStr, url: contentStr };
       }
 
       const briefPrompt = prompt.length > 0 ? prompt.substring(0, 10) : selectedModel;
       const assetName = `${assetType === 'image' ? '🖼️' : '📝'} ${briefPrompt}...`;
 
-      await apiClient.post('/assets/', {
-        name: assetName, type: assetType, data: assetData, tags: ['AI_Generated', mode, selectedModel],
-        thumbnail: thumbnail, project_id: projectId ? Number(projectId) : null
-      });
+      await apiClient.post('/assets/', { name: assetName, type: assetType, data: assetData, tags: ['AI_Generated', mode, selectedModel], thumbnail: thumbnail, project_id: projectId ? Number(projectId) : null });
       message.success('已携带【溯源信息】固化到资产库！');
-    } catch (error: any) {
-      message.error(`入库失败: ${error.response?.data?.detail || '网络错误'}`);
-    } finally { setSavingAsset(false); }
+    } catch (error: any) { message.error(`入库失败`); } finally { setSavingAsset(false); }
   };
 
   const renderParams = () => {
@@ -256,31 +208,15 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       return (
         <div key={p.name} style={{ marginBottom: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4, alignItems: 'center' }}>
-            <Text type="secondary" style={{ color: '#475569', fontWeight: 500 }}>{p.label}</Text>
+            <Text type="secondary" style={{ color: '#475569', fontWeight: 600 }}>{p.label}</Text>
             {p.type === 'number' && <Text type="secondary" style={{ color: '#1890ff', fontWeight: 'bold' }}>{val}</Text>}
-            {p.type === 'boolean' && (
-              <Switch size="small" checked={!!val} onChange={v => {
-                  const newParams = { ...params, [p.name]: v };
-                  setParams(newParams); updateNodeData(id, { params: newParams });
-              }} />
-            )}
+            {p.type === 'boolean' && <Switch className="nodrag" size="small" checked={!!val} onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />}
           </div>
-          {p.type === 'select' && (
-            <Select className="nodrag" size="middle" style={{ width: '100%' }} value={val} options={p.options}
-              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
-          )}
-          {p.type === 'number' && p.max <= 2 && (
-            <Slider className="nodrag" min={p.min} max={p.max} step={p.step} value={val} style={{ margin: '0 8px' }}
-              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
-          )}
-          {p.type === 'number' && p.max > 2 && (
-            <InputNumber className="nodrag" size="middle" style={{ width: '100%' }} value={val}
-              onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
-          )}
-          {(p.type === 'string' || p.type === 'text') && (
-            <Input className="nodrag" size="middle" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`}
-              onChange={e => { const newParams = { ...params, [p.name]: e.target.value }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />
-          )}
+          {/* 🌟 核心：为所有输入控件精准加上 className="nodrag"，防止滑动冲突 */}
+          {p.type === 'select' && <Select className="nodrag" size="middle" style={{ width: '100%' }} value={val} options={p.options} onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />}
+          {p.type === 'number' && p.max <= 2 && <Slider className="nodrag nowheel" min={p.min} max={p.max} step={p.step} value={val} style={{ margin: '0 8px' }} onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />}
+          {p.type === 'number' && p.max > 2 && <InputNumber className="nodrag" size="middle" style={{ width: '100%' }} value={val} onChange={v => { const newParams = { ...params, [p.name]: v }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />}
+          {(p.type === 'string' || p.type === 'text') && <Input className="nodrag" size="middle" style={{ width: '100%' }} value={val} placeholder={`如: ${p.default || ''}`} onChange={e => { const newParams = { ...params, [p.name]: e.target.value }; setParams(newParams); updateNodeData(id, { params: newParams }); }} />}
         </div>
       );
     });
@@ -288,13 +224,9 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   const renderDynamicHandles = () => {
     const handles = [];
-    if (isAgentMode) {
-        handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 30, background: '#fadb14', width: 12, height: 12 }} /></Tooltip>);
-    }
+    if (isAgentMode) handles.push(<Tooltip key="sys-in" title="外挂预设 (System Prompt)" placement="left"><Handle type="target" position={Position.Left} id="system" style={{ top: 30, background: '#fadb14', width: 12, height: 12 }} /></Tooltip>);
     handles.push(<Tooltip key="text-in" title="输入文本素材" placement="left"><Handle type="target" position={Position.Left} id="text" style={{ top: 70, background: '#52c41a', width: 12, height: 12 }} /></Tooltip>);
-    if (mode === 'vision' || mode === 'image_to_image' || mode === 'image_to_video') {
-      handles.push(<Tooltip key="img-in" title="输入参考图片" placement="left"><Handle type="target" position={Position.Left} id="image" style={{ top: 110, background: '#1890ff', width: 12, height: 12 }} /></Tooltip>);
-    }
+    if (mode === 'vision' || mode === 'image_to_image' || mode === 'image_to_video') handles.push(<Tooltip key="img-in" title="输入参考图片" placement="left"><Handle type="target" position={Position.Left} id="image" style={{ top: 110, background: '#1890ff', width: 12, height: 12 }} /></Tooltip>);
     return handles;
   };
 
@@ -303,8 +235,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       {renderDynamicHandles()}
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
 
-        {/* 区域一：配置区，自适应滚动 */}
-        <div className="nodrag" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingRight: 4, gap: 10, minHeight: 120 }}>
+        {/* 🌟 移除大区块容器的 nodrag，只在可滚动区域加 nowheel 防冲突 */}
+        <div className="nowheel" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingRight: 4, gap: 10, minHeight: 120 }}>
           <div style={{ flexShrink: 0 }}>
             {isAgentMode && (
               <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 8, border: isRoleCollapsed ? '1px solid #cbd5e1' : '1px solid #ffd591' }}>
@@ -314,7 +246,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                 </div>
                 {!isRoleCollapsed && (
                   <div style={{ padding: '0 12px 12px 12px' }}>
-                      <Select size="middle" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
+                      <Select className="nodrag" size="middle" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
                       <div style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px dashed #ffd591' }}><Text style={{ fontSize: 13, color: '#475569' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text></div>
                   </div>
                 )}
@@ -335,18 +267,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
             </div>
           </div>
 
-          <Select placeholder="1. 选择云端算力" size="middle" style={{ width: '100%', flexShrink: 0 }} value={selectedKey || undefined} onChange={v => { setSelectedKey(v); setSelectedModel(''); }} options={keys.map(k => ({ label: `${k.provider} - ${k.description}`, value: k.id }))} />
+          <Select className="nodrag" placeholder="1. 选择云端算力" size="middle" style={{ width: '100%', flexShrink: 0 }} value={selectedKey || undefined} onChange={v => { setSelectedKey(v); setSelectedModel(''); }} options={keys.map(k => ({ label: `${k.provider} - ${k.description}`, value: k.id }))} />
           {loading ? <Spin size="small" /> : (
             <>
               <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                <Select placeholder="2. 选择 AI 模型" size="middle" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
-                  setSelectedModel(v);
-                  const m = allModels.find(i => i.model_name === v);
-                  if(m?.context_ui_params && m.context_ui_params[mode]) {
-                    const defs:any={};
-                    m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default);
-                    setParams(defs);
-                  }
+                <Select className="nodrag" placeholder="2. 选择 AI 模型" size="middle" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
+                  setSelectedModel(v); const m = allModels.find(i => i.model_name === v);
+                  if(m?.context_ui_params && m.context_ui_params[mode]) { const defs:any={}; m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default); setParams(defs); }
                 }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
                 <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} style={{ height: 32 }} onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
               </div>
@@ -356,7 +283,7 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
                   {renderParams()}
                 </div>
               )}
-              <TextArea placeholder="输入指令或连线输入素材..." autoSize={{ minRows: 4, maxRows: 8 }} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontSize: 13, fontFamily: 'monospace', background: '#fff', borderRadius: 8, flexShrink: 0 }} />
+              <TextArea className="nodrag nowheel" placeholder="输入指令或连线输入素材..." autoSize={{ minRows: 4, maxRows: 8 }} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontSize: 13, fontFamily: 'monospace', background: '#fff', borderRadius: 8, flexShrink: 0 }} />
             </>
           )}
         </div>
@@ -365,22 +292,27 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           {generating ? '正在思考...' : '单点运行'}
         </Button>
 
-        {/* 🌟 区域二：自适应绝对定位预览区 */}
-        <div className="nodrag" style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
+        {/* 🌟 同样移除下半区的 nodrag */}
+        <div style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 600, fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 700, fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {data.result?.content && (
                 <Tooltip title="携带血统溯源固化到资产库">
                   <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 18, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                 </Tooltip>
               )}
-              <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+              <Switch className="nodrag" size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
             </div>
           </div>
 
           {showPreview && (
             <div style={{ flex: 1, position: 'relative', background: '#0f172a', borderRadius: 8, overflow: 'hidden', marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {mediaDims && !generating && data.result?.content && (
+                <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  {mediaDims}
+                </div>
+              )}
               {generating ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <Spin size="default" style={{ marginBottom: 12 }} />
@@ -389,12 +321,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
               ) : data.result?.content ? (
                 (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
                   data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
-                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
                   ) : (
-                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} alt="Preview" />
+                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} alt="Preview" onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
                   )
                 ) : (
-                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                  // 🌟 文字显示区域保留 nodrag nowheel
+                  <div className="nodrag nowheel" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     {data.result.content}
                   </div>
                 )

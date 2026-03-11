@@ -37,6 +37,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const [progressMsg, setProgressMsg] = useState<string>('');
   const [savingAsset, setSavingAsset] = useState(false);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
+  const [mediaDims, setMediaDims] = useState<string>('');
 
   const prevSignalRef = useRef(data._runSignal);
   useEffect(() => {
@@ -45,6 +46,8 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       handleRun();
     }
   }, [data._runSignal]);
+
+  useEffect(() => { setMediaDims(''); }, [data.result?.content]);
 
   useEffect(() => {
     const httpBase = apiClient.defaults.baseURL || 'http://127.0.0.1:8000/api';
@@ -113,25 +116,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   const availableKeys = keys.filter(k => String(k.provider).toLowerCase() === String(selectedProvider).toLowerCase() && k.is_active);
 
   const handleRun = async () => {
-    if (!selectedProvider || !selectedKeyId) {
-      setNodeStatus(id, 'error');
-      return message.warning('请选择执行凭证');
-    }
-    if (!workflowJson.trim()) {
-      setNodeStatus(id, 'error');
-      return message.warning('请拖入工作流或输入JSON');
-    }
+    if (!selectedProvider || !selectedKeyId) { setNodeStatus(id, 'error'); return message.warning('请选择执行凭证'); }
+    if (!workflowJson.trim()) { setNodeStatus(id, 'error'); return message.warning('请拖入工作流或输入JSON'); }
 
     updateNodeData(id, { result: null });
-    setIsRunning(true);
-    setProgressMsg('正在唤醒本地引擎...');
-    setNodeStatus(id, 'running');
+    setIsRunning(true); setProgressMsg('正在唤醒本地引擎...'); setNodeStatus(id, 'running');
 
     try {
       let finalWorkflow = JSON.parse(workflowJson);
-      const edges = getEdges();
-      const nodes = getNodes();
-      const incomingEdges = edges.filter(e => e.target === id);
+      const edges = getEdges(); const nodes = getNodes(); const incomingEdges = edges.filter(e => e.target === id);
 
       if (parameters) {
         Object.keys(parameters).forEach(paramName => {
@@ -148,8 +141,7 @@ export default function ComfyUIEngineNode(props: NodeProps) {
             let current = finalWorkflow[config.node_id];
             if (current) {
               for (let i = 0; i < pathParts.length - 1; i++) {
-                if (!current[pathParts[i]]) current[pathParts[i]] = {};
-                current = current[pathParts[i]];
+                if (!current[pathParts[i]]) current[pathParts[i]] = {}; current = current[pathParts[i]];
               }
               current[pathParts[pathParts.length - 1]] = valToInject;
             }
@@ -157,22 +149,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
         });
       }
 
-      // 🌟 记录最终的参数映射表，用于溯源入库
       updateNodeData(id, { _finalUsedWorkflow: finalWorkflow, _finalUsedParams: paramValues });
 
       await apiClient.post('/generate', {
-        api_key_id: selectedKeyId,
-        provider: selectedProvider,
-        model: 'comfyui-workflow',
-        type: 'image',
-        prompt: JSON.stringify(finalWorkflow),
-        params: { client_id: id }
+        api_key_id: selectedKeyId, provider: selectedProvider, model: 'comfyui-workflow', type: 'image',
+        prompt: JSON.stringify(finalWorkflow), params: { client_id: id }
       });
     } catch (error: any) {
       message.error(error.response?.data?.detail || '投递失败');
-      setIsRunning(false);
-      setProgressMsg('');
-      setNodeStatus(id, 'error');
+      setIsRunning(false); setProgressMsg(''); setNodeStatus(id, 'error');
     }
   };
 
@@ -183,16 +168,10 @@ export default function ComfyUIEngineNode(props: NodeProps) {
       const contentStr = String(data.result.content);
       const isVideo = data.result.type === 'video' || contentStr.match(/\.(mp4|webm|mov|gif)(\?|$)/i);
 
-      // 🌟 核心：给物理引擎产物打上工作流“血统”标签
       await apiClient.post('/assets/', {
         name: `${isVideo ? '🎬' : '🖼️'} 物理机产物...`, type: isVideo ? 'video' : 'image',
-        data: {
-          file_path: contentStr, url: contentStr, content: contentStr,
-          source_workflow: data._finalUsedWorkflow,
-          source_params: data._finalUsedParams
-        },
-        tags: ['ComfyUI_Rendered'],
-        thumbnail: isVideo ? undefined : contentStr, project_id: projectId ? Number(projectId) : null
+        data: { file_path: contentStr, url: contentStr, content: contentStr, source_workflow: data._finalUsedWorkflow, source_params: data._finalUsedParams },
+        tags: ['ComfyUI_Rendered'], thumbnail: isVideo ? undefined : contentStr, project_id: projectId ? Number(projectId) : null
       });
       message.success(`已携带【工作流血统】固化到当前项目！`);
     } catch (error) { message.error(`入库失败`); } finally { setSavingAsset(false); }
@@ -214,12 +193,13 @@ export default function ComfyUIEngineNode(props: NodeProps) {
 
       <div ref={drop} style={{ width: '100%', height: '100%', padding: '0 0 12px 0', border: isOver ? '2px dashed #1890ff' : '2px dashed transparent', backgroundColor: isOver ? 'rgba(24,144,255,0.05)' : 'transparent', transition: 'all 0.3s', display: 'flex', flexDirection: 'column' }}>
 
-        {/* 🌟 区域一：配置区，自适应高度并可滚动 */}
-        <div className="nodrag" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', minHeight: 120 }}>
+        {/* 🌟 核心：移除父容器 nodrag，让空白处成为可拖拽体 */}
+        <div className="nowheel" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', minHeight: 120 }}>
 
           <Space direction="vertical" size="small" style={{ width: '100%', flexShrink: 0 }}>
-            <Select size="middle" style={{ width: '100%' }} placeholder="1. 算力节点" options={providers.map(p => ({ label: p.display_name, value: p.id }))} value={selectedProvider} onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); updateNodeData(id, { selectedProvider: val }); }} />
-            <Select size="middle" style={{ width: '100%' }} placeholder="2. 执行凭证" options={availableKeys.map(k => ({ label: k.description || '凭证', value: k.id }))} value={selectedKeyId} onChange={(val) => { setSelectedKeyId(val); updateNodeData(id, { selectedKeyId: val }); }} disabled={!selectedProvider} />
+            {/* 给输入控件精准附加 nodrag */}
+            <Select className="nodrag" size="middle" style={{ width: '100%' }} placeholder="1. 算力节点" options={providers.map(p => ({ label: p.display_name, value: p.id }))} value={selectedProvider} onChange={(val) => { setSelectedProvider(val); setSelectedKeyId(null); updateNodeData(id, { selectedProvider: val }); }} />
+            <Select className="nodrag" size="middle" style={{ width: '100%' }} placeholder="2. 执行凭证" options={availableKeys.map(k => ({ label: k.description || '凭证', value: k.id }))} value={selectedKeyId} onChange={(val) => { setSelectedKeyId(val); updateNodeData(id, { selectedKeyId: val }); }} disabled={!selectedProvider} />
           </Space>
 
           {parameters && Object.keys(parameters).length > 0 && (
@@ -228,15 +208,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
               {Object.keys(parameters).map((paramName) => (
                 <div key={paramName} style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4, color: '#475569', fontWeight: 500 }}>{paramName}</Text>
-                  <Input size="middle" value={paramValues[paramName] || ''} placeholder="手动填写或连线覆盖..." onChange={(e) => { const newVals = { ...paramValues, [paramName]: e.target.value }; setParamValues(newVals); updateNodeData(id, { paramValues: newVals }); }} />
+                  <Input className="nodrag" size="middle" value={paramValues[paramName] || ''} placeholder="手动填写或连线覆盖..." onChange={(e) => { const newVals = { ...paramValues, [paramName]: e.target.value }; setParamValues(newVals); updateNodeData(id, { paramValues: newVals }); }} />
                 </div>
               ))}
             </div>
           )}
 
           <div style={{ flexShrink: 0 }}>
-            <Text type="secondary" style={{ fontSize: 13, color: '#64748b' }}><ApiOutlined /> JSON 源码</Text>
-            <TextArea rows={2} style={{ fontSize: 12, fontFamily: 'monospace', borderRadius: 8, marginTop: 4 }} value={workflowJson} onChange={(e) => { setWorkflowJson(e.target.value); updateNodeData(id, { workflowJson: e.target.value }); }} />
+            <Text type="secondary" style={{ fontSize: 13, color: '#64748b', fontWeight: 600 }}><ApiOutlined /> JSON 源码</Text>
+            <TextArea className="nodrag nowheel" rows={2} style={{ fontSize: 12, fontFamily: 'monospace', borderRadius: 8, marginTop: 4 }} value={workflowJson} onChange={(e) => { setWorkflowJson(e.target.value); updateNodeData(id, { workflowJson: e.target.value }); }} />
           </div>
         </div>
 
@@ -244,22 +224,27 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           {isRunning ? '任务执行中...' : '发送到物理机'}
         </Button>
 
-        {/* 🌟 区域二：自适应绝对定位 GPU 预览框 */}
-        <div className="nodrag" style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
+        {/* 🌟 同样移除下半区大容器的 nodrag */}
+        <div style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 600, fontFamily: 'monospace' }}>&gt; GPU_OUTPUT</Text>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 700, fontFamily: 'monospace' }}>&gt; GPU_OUTPUT</Text>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {data.result?.content && (
                 <Tooltip title="携带血统固化到资产库">
                   <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 18, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                 </Tooltip>
               )}
-              <Switch size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+              <Switch className="nodrag" size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
             </div>
           </div>
 
           {showPreview && (
             <div style={{ flex: 1, position: 'relative', background: '#0f172a', borderRadius: 8, overflow: 'hidden', marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {mediaDims && !isRunning && data.result?.content && (
+                <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  {mediaDims}
+                </div>
+              )}
               {isRunning ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <Spin size="default" style={{ marginBottom: 12 }} />
@@ -268,12 +253,13 @@ export default function ComfyUIEngineNode(props: NodeProps) {
               ) : data.result?.content ? (
                 (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
                   data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
-                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
                   ) : (
-                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} alt="Preview" />
+                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} alt="Preview" onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
                   )
                 ) : (
-                  <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{data.result.content}</div>
+                  // 🌟 文字显示区域保留 nodrag nowheel 防止复制和滚动冲突
+                  <div className="nodrag nowheel" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{data.result.content}</div>
                 )
               ) : (
                 <Text type="secondary" style={{ fontSize: 13, color: '#475569' }}>等待物理机回传...</Text>
