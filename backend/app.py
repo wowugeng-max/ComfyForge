@@ -29,6 +29,8 @@ from backend.models.provider import Provider
 from backend.core.ws import manager
 
 tasks = {}
+# 🌟 Phase 10: 建立全局任务管家，记录 client_id 与其正在执行的 Adapter 实例
+active_adapters: Dict[str, Any] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -190,6 +192,9 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 # 2. 真正的后台异步兵工厂 (在这里调用算力引擎)
 async def run_adapter_task(adapter, request_params: dict, client_id: str):
     try:
+        # 🌟 兵工厂开工第一件事：登记入册，让大管家知道这个 client_id 对应的算力引擎实例
+        active_adapters[client_id] = adapter
+
         result = await adapter.generate(request_params)
         if result.get("success"):
             await manager.send_message({"type": "result", "data": result}, client_id)
@@ -197,6 +202,9 @@ async def run_adapter_task(adapter, request_params: dict, client_id: str):
             await manager.send_message({"type": "error", "message": result.get("error", "未知错误")}, client_id)
     except Exception as e:
         await manager.send_message({"type": "error", "message": f"引擎异常: {str(e)}"}, client_id)
+    finally:
+        # 🌟 无论成功、失败还是被中断，结束时必须擦除记录，防止内存泄漏
+        active_adapters.pop(client_id, None)
 
 # 3. 终极版 Generate 路由 (负责发牌和 HTTP 秒回)
 @app.post("/api/generate")
@@ -242,3 +250,25 @@ async def generate_content(request: GenerateRequest, background_tasks: Backgroun
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"算力分配异常: {str(e)}")
+
+
+# 🌟 新增：暴露给前端的一键中断路由 (直接加在 run_adapter_task 下方即可)
+@app.post("/api/interrupt/{client_id}")
+async def interrupt_task(client_id: str):
+    """
+    接收前端一键中断请求
+    """
+    if client_id in active_adapters:
+        adapter = active_adapters[client_id]
+        # 触发底层 Adapter 的物理级中断
+        success = await adapter.interrupt()
+        return {
+            "success": True,
+            "message": "已成功拦截数据流，并向引擎下发中断指令",
+            "physical_interrupted": success
+        }
+
+    return {
+        "success": False,
+        "message": "未找到正在运行的任务，节点可能已处于空闲状态"
+    }

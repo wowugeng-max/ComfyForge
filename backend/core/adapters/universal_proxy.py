@@ -22,6 +22,17 @@ class UniversalProxyAdapter(BaseAdapter):
             self.api_key.base_url if self.api_key and self.api_key.base_url else self.provider.default_base_url)
         if self.base_url and self.base_url.endswith("/"):
             self.base_url = self.base_url[:-1]
+            # 🌟 1. 新增：本地逻辑中断标志位
+            self._is_interrupted = False
+
+        # 🌟 2. 新增：物理/逻辑中断接口
+        async def interrupt(self) -> bool:
+            """
+            云端 API 中断逻辑：触发本地协程自杀，切断长轮询
+            """
+            self._is_interrupted = True
+            print(f"🛑 [Universal Proxy] 收到中断指令，即将切断 Provider [{self.provider.id}] 的 HTTP 等待与轮询链...")
+            return True
 
     def _build_headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -121,6 +132,9 @@ class UniversalProxyAdapter(BaseAdapter):
         return val
 
     async def generate(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
+        # 🌟 每次全新运行前，重置标志位
+        self._is_interrupted = False
+
         if not self.base_url:
             return {"success": False, "error": f"Provider [{self.provider.id}] 未配置基础网关"}
 
@@ -148,8 +162,13 @@ class UniversalProxyAdapter(BaseAdapter):
         is_image_or_video = req_type in ["image", "video", "text_to_image", "image_to_image", "text_to_video",
                                          "image_to_video"]
 
+        # 🌟 中断防线 1：发出首次请求前的最后检查
+        if self._is_interrupted:
+            return {"success": False, "error": "任务被手动中断"}
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
+                # ====== 这里是我们开始与云端通信 ======
                 response = await client.post(endpoint, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
@@ -157,6 +176,7 @@ class UniversalProxyAdapter(BaseAdapter):
                 task_id = None
                 status = None
 
+                # (提取 task_id 和 status 的代码保持不变...)
                 if isinstance(route_config, dict) and "task_id_extractor" in route_config:
                     task_id = self._extract_value_by_path(data, route_config["task_id_extractor"])
                     status = str(self._extract_value_by_path(data, route_config.get("status_extractor",
@@ -166,6 +186,7 @@ class UniversalProxyAdapter(BaseAdapter):
                     status = str(data.get("status") or data.get("task_status") or (
                         data.get("output", {}).get("task_status", ""))).lower()
 
+                # ====== 🌟 核心拦截区：漫长的异步轮询 ======
                 if task_id and status in ["pending", "processing", "submitted", "in_progress", "queued"]:
                     poll_url_template = route_config.get("poll_url") if isinstance(route_config, dict) else None
                     if poll_url_template:
@@ -175,7 +196,18 @@ class UniversalProxyAdapter(BaseAdapter):
 
                     max_attempts = 60
                     for _ in range(max_attempts):
+                        # 🌟 中断防线 2：进入长睡眠前检查
+                        if self._is_interrupted:
+                            print(f"🛑 [Universal Proxy] 已强行切断任务 {task_id} 的轮询。")
+                            return {"success": False, "error": "任务被手动中断 (云端渲染可能继续，但本地连接已释放)"}
+
                         await asyncio.sleep(10)
+
+                        # 🌟 中断防线 3：睡醒之后再次检查，防止在 sleep 期间被用户点击中断
+                        if self._is_interrupted:
+                            print(f"🛑 [Universal Proxy] 已强行切断任务 {task_id} 的轮询。")
+                            return {"success": False, "error": "任务被手动中断 (云端渲染可能继续，但本地连接已释放)"}
+
                         poll_resp = await client.get(poll_endpoint, headers=headers)
                         poll_resp.raise_for_status()
                         poll_data = poll_resp.json()

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Handle, Position, type NodeProps, useReactFlow } from 'reactflow';
 import { useParams } from 'react-router-dom';
 import { Select, Input, Button, message, Typography, Tooltip, Space, Spin, Switch } from 'antd';
-import { PlayCircleOutlined, ApiOutlined, SaveOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, ApiOutlined, SaveOutlined,StopOutlined } from '@ant-design/icons';
 import { providerApi } from '../../api/providers';
 import { keyApi } from '../../api/keys';
 import apiClient from '../../api/client';
@@ -161,6 +161,17 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     }
   };
 
+  // 🌟 Phase 10: 物理级中断机制
+  const handleInterrupt = async () => {
+    try {
+      await apiClient.post(`/interrupt/${id}`);
+      message.warning('已下发强制释放 GPU 信令！');
+      // 注意：这里不要手动 setIsRunning(false)，让后端的 WebSocket 返回 error 消息来触发统一的状态清理，保证闭环
+    } catch (error) {
+      message.error('中断信令发送失败');
+    }
+  };
+
   const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
@@ -220,8 +231,16 @@ export default function ComfyUIEngineNode(props: NodeProps) {
           </div>
         </div>
 
-        <Button type="primary" block icon={<PlayCircleOutlined />} loading={isRunning} onClick={handleRun} style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}>
-          {isRunning ? '任务执行中...' : '发送到物理机'}
+{/* 🌟 Phase 10 核心：移除 loading 属性，变成危险红色的紧急刹车按钮 */}
+        <Button
+          type="primary"
+          danger={isRunning}
+          block
+          icon={isRunning ? <StopOutlined /> : <PlayCircleOutlined />}
+          onClick={isRunning ? handleInterrupt : handleRun}
+          style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}
+        >
+          {isRunning ? '终止任务 (强行释放 GPU)' : '发送到物理机'}
         </Button>
 
         {/* 🌟 同样移除下半区大容器的 nodrag */}

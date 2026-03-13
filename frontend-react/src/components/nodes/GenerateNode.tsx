@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch } from 'antd';
-import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined, StarFilled, SaveOutlined } from '@ant-design/icons';
+import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined, StarFilled, SaveOutlined,StopOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useCanvasStore } from '../../stores/canvasStore';
 
@@ -176,6 +176,16 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     }
   };
 
+  // 🌟 Phase 10: 云端逻辑级中断机制
+  const handleInterrupt = async () => {
+    try {
+      await apiClient.post(`/interrupt/${id}`);
+      message.warning('已下发拦截指令，正在切断云端长连接/轮询...');
+    } catch (error) {
+      message.error('拦截信令发送失败');
+    }
+  };
+
   const handleSaveToAsset = async () => {
     if (!data.result?.content) return;
     setSavingAsset(true);
@@ -288,8 +298,16 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           )}
         </div>
 
-        <Button type="primary" block loading={generating} onClick={handleRun} style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}>
-          {generating ? '正在思考...' : '单点运行'}
+{/* 🌟 Phase 10：AI大脑拦截按钮 */}
+        <Button
+          type="primary"
+          danger={generating}
+          block
+          icon={generating ? <StopOutlined /> : <PlayCircleOutlined />}
+          onClick={generating ? handleInterrupt : handleRun}
+          style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}
+        >
+          {generating ? '强行中止 (切断网络连接)' : '单点运行'}
         </Button>
 
         {/* 🌟 同样移除下半区的 nodrag */}

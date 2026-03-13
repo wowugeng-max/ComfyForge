@@ -21,40 +21,59 @@ class ComfyUIAdapter(BaseAdapter):
     def __init__(self, provider: Provider, api_key: APIKey = None):
         self.provider = provider
         self.api_key = api_key
+        # 🌟 新增：追踪状态与网关地址，用于 interrupt 方法
+        self._is_interrupted = False
+        self._current_base_url = None
+
+        # 🌟 新增：真正的物理级释放 GPU 方法
+        async def interrupt(self) -> bool:
+            self._is_interrupted = True
+            if not self._current_base_url:
+                return False
+
+            try:
+                # 向局域网或云端物理机发送真实的 /interrupt 请求
+                interrupt_url = f"{self._current_base_url}/interrupt"
+                print(f"🛑 [ComfyUI Engine] 正在强行中断显存计算: {interrupt_url}")
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(interrupt_url, timeout=5.0)
+                    return res.status_code == 200
+            except Exception as e:
+                print(f"⚠️ [ComfyUI Engine] 物理机释放指令发送失败: {e}")
+                return False
 
     async def generate(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
         prompt = request_params.get("prompt")
         req_type = request_params.get("type", "image")
-        client_id = request_params.get("client_id")  # 获取发出请求的节点 ID
+        client_id = request_params.get("client_id")
 
-        # 🌟 定义专属广播喇叭
         async def notify(text):
             if client_id:
                 await manager.send_message({"type": "status", "message": text}, client_id)
 
-        # 🌟 1. 绝对纯粹的寻址逻辑：优先用 Key 的自定义网关，否则用厂商的默认网关
         base_url = None
         if self.api_key and self.api_key.base_url:
             base_url = self.api_key.base_url
         elif self.provider and self.provider.default_base_url:
             base_url = self.provider.default_base_url
 
-        # 🌟 2. 拒绝兜底：如果完全没配，直接打回，倒逼用户去页面配置
         if not base_url:
             error_msg = f"未配置算力网关！请前往 [凭证管理] 页面正确填写 Base URL。"
             await notify(f"❌ 启动失败: {error_msg}")
             return {"success": False, "error": error_msg}
 
-        # 🌟 3. 严格遵循页面配置
         actual_base_url = str(base_url).strip().rstrip('/')
         api_key_value = self.api_key.key if self.api_key else ""
 
-        # （仅保留：针对 RunningHub 这种必须把 Key 拼在 URL 路径里的特殊云端中转站做兼容）
         if "runninghub" in actual_base_url.lower() and api_key_value and not actual_base_url.endswith(api_key_value):
             actual_base_url = f"{actual_base_url}/{api_key_value}"
 
         prompt_url = f"{actual_base_url}/prompt"
         history_url = f"{actual_base_url}/history"
+
+        # 🌟 关键：在此处登记当前网关地址，并重置地雷状态，确立战线
+        self._current_base_url = actual_base_url
+        self._is_interrupted = False
 
         try:
             parsed_prompt = json.loads(prompt) if isinstance(prompt, str) else prompt
@@ -64,16 +83,19 @@ class ComfyUIAdapter(BaseAdapter):
             return {"success": False, "error": "提交给 ComfyUI 的 prompt 必须是有效的 Workflow JSON"}
 
         payload = {"prompt": actual_workflow}
-
         await notify(f"📦 正在连接算力网关: {actual_base_url} ...")
 
         async with httpx.AsyncClient() as client:
             try:
+                # 🌟 提交前第一道防线检查
+                if self._is_interrupted:
+                    return {"success": False, "error": "任务被手动中断"}
+
                 print(f"🚀 [ComfyUI Engine] 提交任务至: {prompt_url}")
                 submit_res = await client.post(prompt_url, json=payload, timeout=15.0)
 
-                # 🌟 捕捉 400 错误：机器连上了，但工作流缺节点
                 if submit_res.status_code != 200:
+                    # (原有的错误解析逻辑保持不变...)
                     error_msg = submit_res.text
                     try:
                         error_json = submit_res.json()
@@ -96,7 +118,17 @@ class ComfyUIAdapter(BaseAdapter):
                 await notify(f"🔥 算力已响应！任务 ID {prompt_id[:6]} 开始渲染...")
 
                 for i in range(1200):
+                    # 🌟 循环防线 1：睡前检查
+                    if self._is_interrupted:
+                        await notify("🛑 已拦截！正在强行释放 GPU...")
+                        return {"success": False, "error": "任务被手动中断 (显存已释放)"}
+
                     await asyncio.sleep(5)
+
+                    # 🌟 循环防线 2：睡醒检查（防止在 sleep 的这 5 秒内被点击中止）
+                    if self._is_interrupted:
+                        await notify("🛑 已拦截！正在强行释放 GPU...")
+                        return {"success": False, "error": "任务被手动中断 (显存已释放)"}
 
                     if i % 2 == 0:
                         await notify(f"⚡ GPU 计算中... (已耗时 {i * 5} 秒)")
@@ -109,6 +141,7 @@ class ComfyUIAdapter(BaseAdapter):
                             print(f"🎉 [ComfyUI Engine] 渲染完成！")
                             outputs = history_data[prompt_id].get("outputs", {})
 
+                            # (原有的提取 media_url 的代码保持不变...)
                             media_url = None
                             for node_id, output in outputs.items():
                                 if "gifs" in output and len(output["gifs"]) > 0:
@@ -137,13 +170,12 @@ class ComfyUIAdapter(BaseAdapter):
 
                 return {"success": False, "error": "ComfyUI 渲染超时 (已超 100 分钟)"}
 
+            # (原有的 except 块保持不变...)
             except httpx.ConnectError as ce:
-                # 🌟 捕捉无法连接异常：IP填错、端口没开、或者机器没开机
                 error_str = f"网络通信失败 (请检查网关 {actual_base_url} 是否存活)"
                 await notify(f"❌ {error_str}")
                 return {"success": False, "error": error_str}
             except Exception as e:
-                # 🌟 捕捉其他异常并直接抛给前端
                 error_str = f"请求异常: {str(e)}"
                 await notify(f"❌ {error_str}")
                 return {"success": False, "error": error_str}
