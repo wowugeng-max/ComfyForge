@@ -119,7 +119,9 @@ export default function ComfyUIEngineNode(props: NodeProps) {
     if (!selectedProvider || !selectedKeyId) { setNodeStatus(id, 'error'); return message.warning('请选择执行凭证'); }
     if (!workflowJson.trim()) { setNodeStatus(id, 'error'); return message.warning('请拖入工作流或输入JSON'); }
 
+    // 🌟 运行前，必须彻底清空旧状态
     updateNodeData(id, { result: null });
+    setNodeStatus(id, 'running');
     setIsRunning(true); setProgressMsg('正在唤醒本地引擎...'); setNodeStatus(id, 'running');
 
     try {
@@ -162,17 +164,15 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   };
 
   // 🌟 Phase 10: 物理级中断机制
+  // 🌟 物理级中断机制：信任后端，死等报错包！
   const handleInterrupt = async () => {
     try {
-      await apiClient.post(`/interrupt/${id}`); // 如果您的 axios 没有配置 baseURL，请写成 `/api/interrupt/${id}`
-      message.success('已强行下发显存释放信令！');
+      await apiClient.post(`/api/interrupt/${id}`); // 确保有 /api 前缀
+      message.warning('已下发强制释放 GPU 信令，等待后端确认...');
     } catch (error) {
       message.error('中断信令发送失败 (可能引擎已空闲)');
-    } finally {
-      // 🌟 核心：无论后端有没有成功收到，前端必须立刻把按钮洗白！防止丢包导致卡死
-      setIsRunning(false);
-      setNodeStatus(id, 'idle'); // 将节点状态置为等待重试的闲置态
     }
+    // ⚠️ 删掉整个 finally 块！不要在这里调用 setIsRunning(false) 和 setNodeStatus(id, 'idle')！
   };
 
   const handleSaveToAsset = async () => {

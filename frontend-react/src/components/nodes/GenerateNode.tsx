@@ -138,7 +138,9 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   const handleRun = async () => {
     if (!selectedKey || !selectedModel) { setNodeStatus(id, 'error'); return message.warning('请完整选择 Key 和 模型'); }
+    // 🌟 运行前，必须彻底清空旧状态
     updateNodeData(id, { result: null });
+    setNodeStatus(id, 'running');
     setGenerating(true); setProgressMsg('正在唤醒云端大脑...'); setNodeStatus(id, 'running');
 
     try {
@@ -177,17 +179,15 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   };
 
   // 🌟 Phase 10: 云端逻辑级中断机制
+// 🌟 云端逻辑级中断机制：信任后端，死等报错包！
   const handleInterrupt = async () => {
     try {
-      await apiClient.post(`/interrupt/${id}`);
-      message.success('已下发拦截指令，正在切断云端网络...');
+      await apiClient.post(`/api/interrupt/${id}`); // 确保有 /api 前缀
+      message.warning('已下发拦截指令，正在切断网络...');
     } catch (error) {
       message.error('拦截信令发送失败');
-    } finally {
-      // 🌟 强行自救，解除红色锁定
-      setGenerating(false);
-      setNodeStatus(id, 'idle');
     }
+    // ⚠️ 删掉整个 finally 块！不要在这里洗白状态！
   };
 
   const handleSaveToAsset = async () => {
