@@ -164,11 +164,14 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   // 🌟 Phase 10: 物理级中断机制
   const handleInterrupt = async () => {
     try {
-      await apiClient.post(`/interrupt/${id}`);
-      message.warning('已下发强制释放 GPU 信令！');
-      // 注意：这里不要手动 setIsRunning(false)，让后端的 WebSocket 返回 error 消息来触发统一的状态清理，保证闭环
+      await apiClient.post(`/interrupt/${id}`); // 如果您的 axios 没有配置 baseURL，请写成 `/api/interrupt/${id}`
+      message.success('已强行下发显存释放信令！');
     } catch (error) {
-      message.error('中断信令发送失败');
+      message.error('中断信令发送失败 (可能引擎已空闲)');
+    } finally {
+      // 🌟 核心：无论后端有没有成功收到，前端必须立刻把按钮洗白！防止丢包导致卡死
+      setIsRunning(false);
+      setNodeStatus(id, 'idle'); // 将节点状态置为等待重试的闲置态
     }
   };
 

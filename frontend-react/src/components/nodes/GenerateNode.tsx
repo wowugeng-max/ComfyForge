@@ -180,9 +180,13 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const handleInterrupt = async () => {
     try {
       await apiClient.post(`/interrupt/${id}`);
-      message.warning('已下发拦截指令，正在切断云端长连接/轮询...');
+      message.success('已下发拦截指令，正在切断云端网络...');
     } catch (error) {
       message.error('拦截信令发送失败');
+    } finally {
+      // 🌟 强行自救，解除红色锁定
+      setGenerating(false);
+      setNodeStatus(id, 'idle');
     }
   };
 

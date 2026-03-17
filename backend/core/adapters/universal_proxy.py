@@ -26,7 +26,7 @@ class UniversalProxyAdapter(BaseAdapter):
             self._is_interrupted = False
 
         # 🌟 2. 新增：物理/逻辑中断接口
-        async def interrupt(self) -> bool:
+    async def interrupt(self) -> bool:
             """
             云端 API 中断逻辑：触发本地协程自杀，切断长轮询
             """

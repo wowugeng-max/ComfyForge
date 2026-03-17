@@ -31,6 +31,8 @@ from backend.core.ws import manager
 tasks = {}
 # 🌟 Phase 10: 建立全局任务管家，记录 client_id 与其正在执行的 Adapter 实例
 active_adapters: Dict[str, Any] = {}
+# 🌟 核弹级新增：追踪底层的异步协程任务实体
+active_tasks: Dict[str, asyncio.Task] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -200,15 +202,24 @@ async def run_adapter_task(adapter, request_params: dict, client_id: str):
             await manager.send_message({"type": "result", "data": result}, client_id)
         else:
             await manager.send_message({"type": "error", "message": result.get("error", "未知错误")}, client_id)
+
+    except asyncio.CancelledError:
+        # 🌟🌟🌟 核心：捕获 task.cancel() 带来的强制中止信号
+        print(f"💥 [Task Manager] 任务 {client_id} 被强行中止 (底层网络连接已斩断)")
+        await manager.send_message({"type": "error", "message": "任务已被手动强行终止"}, client_id)
+
     except Exception as e:
         await manager.send_message({"type": "error", "message": f"引擎异常: {str(e)}"}, client_id)
     finally:
         # 🌟 无论成功、失败还是被中断，结束时必须擦除记录，防止内存泄漏
         active_adapters.pop(client_id, None)
+        active_tasks.pop(client_id, None)
 
 # 3. 终极版 Generate 路由 (负责发牌和 HTTP 秒回)
+# ⚠️ 注意：去掉了参数里的 background_tasks
+# ⚠️ 注意：去掉了参数里的 background_tasks
 @app.post("/api/generate")
-async def generate_content(request: GenerateRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def generate_content(request: GenerateRequest, db: Session = Depends(get_db)):
     key_record = db.query(APIKey).filter(APIKey.id == request.api_key_id).first()
     if not key_record or not key_record.is_active:
         raise HTTPException(status_code=400, detail="无效或未启用的 API Key")
@@ -233,15 +244,14 @@ async def generate_content(request: GenerateRequest, background_tasks: Backgroun
         if request.params:
             request_params.update(request.params)
 
-        # 🌟 获取前端节点的通信 ID
         client_id = request.params.get("client_id") if request.params else None
 
         if client_id:
-            # 🚀 异步模式：扔给兵工厂，HTTP 接口立刻 200 返回！永不超时！
-            background_tasks.add_task(run_adapter_task, adapter, request_params, client_id)
+            # 🚀 核弹级修复：彻底弃用 background_tasks，改用 asyncio.create_task 抓取实体！
+            task = asyncio.create_task(run_adapter_task(adapter, request_params, client_id))
+            active_tasks[client_id] = task  # 登记入册，暴露给中断刀斧手
             return {"success": True, "message": "任务已交由后台引擎处理"}
         else:
-            # 兼容老节点同步模式
             result = await adapter.generate(request_params)
             if not result.get("success"):
                 raise HTTPException(status_code=500, detail=result.get("error", "未知生成错误"))
@@ -253,22 +263,38 @@ async def generate_content(request: GenerateRequest, background_tasks: Backgroun
 
 
 # 🌟 新增：暴露给前端的一键中断路由 (直接加在 run_adapter_task 下方即可)
+# backend/app.py
+
 @app.post("/api/interrupt/{client_id}")
 async def interrupt_task(client_id: str):
-    """
-    接收前端一键中断请求
-    """
+    print(f"\n🛑 收到前端紧急刹车指令，正在搜索目标任务: {client_id}...")
+    physical_success = False
+    killed = False
+
+    # 1. 第一重斩杀：发送物理显存释放指令
     if client_id in active_adapters:
         adapter = active_adapters[client_id]
-        # 触发底层 Adapter 的物理级中断
-        success = await adapter.interrupt()
+        physical_success = await adapter.interrupt()
+        print(f"  👉 [中断步骤 1] 物理释放 GPU 显存: {'成功' if physical_success else '忽略'}")
+
+    # 2. 第二重斩杀：直接杀死 Python 底层死等的网络连接 (拔网线)
+    if client_id in active_tasks:
+        task = active_tasks[client_id]
+        if not task.done():
+            task.cancel()  # 这里会瞬间触发 run_adapter_task 中的 CancelledError
+            killed = True
+            print(f"  👉 [中断步骤 2] 🔪 Python 挂起协程已被强制斩首 (task.cancel)")
+
+    if killed or physical_success:
+        print(f"✅ 任务 {client_id} 拦截完毕！\n")
         return {
             "success": True,
-            "message": "已成功拦截数据流，并向引擎下发中断指令",
-            "physical_interrupted": success
+            "message": "已斩断底层任务并释放资源",
+            "physical_interrupted": physical_success
         }
 
+    print(f"⚠️ 中断失败：管家字典中未找到运行中的 {client_id}\n")
     return {
         "success": False,
-        "message": "未找到正在运行的任务，节点可能已处于空闲状态"
+        "message": "未找到正在运行的任务"
     }
