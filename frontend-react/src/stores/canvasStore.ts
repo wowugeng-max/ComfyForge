@@ -130,29 +130,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   resetAllNodeStatus: (currentNodes) => {
     const newStatus: Record<string, 'idle' | 'running' | 'success' | 'error'> = {};
     currentNodes.forEach(node => {
-      if (node.type === 'loadAsset' || node.type === 'display') {
-        newStatus[node.id] = 'success';
-      } else {
-        newStatus[node.id] = 'idle';
-      }
+      newStatus[node.id] = 'idle';
     });
     set({ nodeRunStatus: newStatus });
   },
-  // 🌟🌟🌟 Phase 10 核心：智能断点洗白机制 (加在这里) 🌟🌟🌟
   smartResetNodeStatus: (currentNodes) => {
     const currentStatus = get().nodeRunStatus;
     const newStatus: Record<string, 'idle' | 'running' | 'success' | 'error'> = { ...currentStatus };
 
     currentNodes.forEach(node => {
-      // 资产和展示节点永远是成功状态，不参与计算
-      if (node.type === 'loadAsset' || node.type === 'display') {
-        newStatus[node.id] = 'success';
-      } else {
-        // 关键判断：如果节点当前已经是 'success'，则坚决保留绿灯，后续引擎会自动跳过！
-        // 如果是 'error'、'running' 或者从未运行过，统统重置为 'idle' 等待重跑。
-        if (currentStatus[node.id] !== 'success') {
-          newStatus[node.id] = 'idle';
-        }
+      if (currentStatus[node.id] !== 'success') {
+        newStatus[node.id] = 'idle';
       }
     });
 

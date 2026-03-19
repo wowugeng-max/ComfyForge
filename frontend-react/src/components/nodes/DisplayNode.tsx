@@ -1,6 +1,6 @@
 // frontend-react/src/components/nodes/DisplayNode.tsx
-import React, { useState, useEffect } from 'react';
-import { Handle, Position, type NodeProps } from 'reactflow';
+import React, { useState, useEffect, useRef } from 'react';
+import { Handle, Position, type NodeProps, useReactFlow } from 'reactflow';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
 import { Typography, Tooltip, Button, message, Modal, Input } from 'antd';
@@ -8,6 +8,7 @@ import { SaveOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useParams } from 'react-router-dom';
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore';
+import { useCanvasStore } from '../../stores/canvasStore';
 
 const { Text } = Typography;
 
@@ -15,11 +16,45 @@ export default function DisplayNode(props: NodeProps) {
   const { data, id } = props;
   const { id: projectId } = useParams<{ id: string }>();
   const fetchAssets = useAssetLibraryStore((state) => state.fetchAssets);
+  const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
+  const updateNodeData = useCanvasStore(state => state.updateNodeData);
+  const { getEdges } = useReactFlow();
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [assetName, setAssetName] = useState('');
   const [savingAsset, setSavingAsset] = useState(false);
   const [mediaDims, setMediaDims] = useState<string>('');
+
+  // 🌟 DAG 感知：响应 _runSignal，收到信号后立即检查是否有数据可展示
+  const prevSignalRef = useRef(data._runSignal);
+  useEffect(() => {
+    if (data._runSignal && data._runSignal !== prevSignalRef.current) {
+      prevSignalRef.current = data._runSignal;
+      const hasData = data.incoming_data || data.result || data.asset?.data || data.content;
+      if (hasData) {
+        // 已有数据，直接标记成功并向下游推送
+        setNodeStatus(id, 'success');
+        const outData = typeof hasData === 'object' ? hasData : { content: hasData };
+        getEdges().filter(e => e.source === id).forEach(edge => {
+          updateNodeData(edge.target, { incoming_data: outData });
+        });
+      } else {
+        // 没有数据，标记为 running，等待上游推送
+        setNodeStatus(id, 'running');
+      }
+    }
+  }, [data._runSignal]);
+
+  // 🌟 DAG 感知：当 incoming_data 变化时，自动标记 success 并向下游传递
+  useEffect(() => {
+    if (data.incoming_data) {
+      setNodeStatus(id, 'success');
+      const outData = typeof data.incoming_data === 'object' ? data.incoming_data : { content: data.incoming_data };
+      getEdges().filter(e => e.source === id).forEach(edge => {
+        updateNodeData(edge.target, { incoming_data: outData });
+      });
+    }
+  }, [data.incoming_data]);
 
   let rawData = data.incoming_data || data.result || data.asset?.data || data.content;
   let displayContent = '';

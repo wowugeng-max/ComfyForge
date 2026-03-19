@@ -1,6 +1,6 @@
 // frontend-react/src/components/nodes/LoadAssetNode.tsx
-import React, { useState, useEffect } from 'react';
-import { Handle, Position, type NodeProps } from 'reactflow';
+import React, { useState, useEffect, useRef } from 'react';
+import { Handle, Position, type NodeProps, useReactFlow } from 'reactflow';
 import { useDrop } from 'react-dnd';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
@@ -17,12 +17,33 @@ const { TextArea } = Input;
 const LoadAssetNode: React.FC<NodeProps> = (props) => {
   const { id, data, isConnectable } = props;
   const { updateNodeData } = useCanvasStore();
+  const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
+  const { getEdges } = useReactFlow();
   const { id: projectId } = useParams<{ id: string }>();
 
   const [asset, setAsset] = useState<any>(data.asset || null);
   const [content, setContent] = useState<string>(data.asset?.data?.content || data.asset?.data?.file_path || '');
   const [isSaving, setIsSaving] = useState(false);
   const [mediaDims, setMediaDims] = useState<string>('');
+
+  // 🌟 DAG 感知：响应 _runSignal
+  const prevSignalRef = useRef(data._runSignal);
+  useEffect(() => {
+    if (data._runSignal && data._runSignal !== prevSignalRef.current) {
+      prevSignalRef.current = data._runSignal;
+      const assetData = data.asset?.data;
+      if (assetData) {
+        setNodeStatus(id, 'success');
+        // 向下游推送资产数据
+        getEdges().filter(e => e.source === id).forEach(edge => {
+          updateNodeData(edge.target, { incoming_data: assetData });
+        });
+      } else {
+        // 没有加载资产，标记失败
+        setNodeStatus(id, 'error');
+      }
+    }
+  }, [data._runSignal]);
 
   useEffect(() => {
     if (data.asset) {
