@@ -65,7 +65,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   redo: () => {
     const { past, future, nodes, edges } = get();
     if (future.length === 0) return;
-    const next = future; // 🌟 保留修复好的
+    const next = future[0];
     const newFuture = future.slice(1);
     set({
       nodes: next.nodes,

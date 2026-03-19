@@ -11,7 +11,7 @@ import {
   ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, ClearOutlined, SearchOutlined,
   // 🌟 新增的图标
   MenuFoldOutlined, MenuUnfoldOutlined, UndoOutlined, RedoOutlined, SyncOutlined, ClockCircleOutlined,
-  StopOutlined
+  StopOutlined, ThunderboltOutlined
 } from '@ant-design/icons';
 
 import { projectApi } from '../../api/projects';
@@ -56,7 +56,7 @@ const CanvasWorkspace = () => {
     undo, redo, past, future,
     // 🌟 DAG 引擎特供
     isGlobalRunning, setGlobalRunning,
-    nodeRunStatus, setNodeStatus, resetAllNodeStatus
+    nodeRunStatus, setNodeStatus, resetAllNodeStatus, smartResetNodeStatus
   } = useCanvasStore();
 
   const [projectName, setProjectName] = useState('加载中...');
@@ -177,9 +177,56 @@ const CanvasWorkspace = () => {
     message.success("🚀 漫剧工业流水线，启动！");
   };
 
+  // ================= 🌟 核心新增：智能断点续跑 =================
+  const handleResumeRun = () => {
+    if (isGlobalRunning) return;
+    if (nodes.length === 0) return message.warning("画布太空了，先添点节点吧！");
+
+    const hasSuccessNode = nodes.some(n => nodeRunStatus[n.id] === 'success');
+    if (!hasSuccessNode) {
+      // 没有任何已成功节点，等同于全新运行
+      resetAllNodeStatus(nodes);
+      setGlobalRunning(true);
+      message.success("🚀 无断点记录，全新启动！");
+      return;
+    }
+
+    // 智能重置：保留 success 节点，error/running/idle 全部洗为 idle
+    smartResetNodeStatus(nodes);
+
+    // 对已成功的节点，重新向下游推送数据（确保下游 incoming_data 不丢失）
+    nodes.forEach(node => {
+      if (nodeRunStatus[node.id] === 'success') {
+        const outData = node.data.result || node.data.asset?.data || node.data.incoming_data;
+        if (outData) {
+          edges.filter(e => e.source === node.id).forEach(edge => {
+            const targetStatus = nodeRunStatus[edge.target];
+            // 只向非 success 的下游推送
+            if (targetStatus !== 'success') {
+              updateNodeData(edge.target, { incoming_data: outData });
+            }
+          });
+        }
+      }
+    });
+
+    setGlobalRunning(true);
+    message.success("⚡ 断点续跑启动！已跳过成功节点");
+  };
+
+  // 判断是否有可续跑的断点（有 success 且有非 success 的节点）
+  const hasBreakpoint = !isGlobalRunning && nodes.some(n => nodeRunStatus[n.id] === 'success') && nodes.some(n => {
+    const s = nodeRunStatus[n.id];
+    return s === 'error' || s === 'idle' || s === 'running';
+  });
+
   // ================= 🌟 核心大脑：DAG 拓扑自动驱动引擎 =================
+  const dagTickRef = useRef(0);
   useEffect(() => {
-    if (!isGlobalRunning) return;
+    if (!isGlobalRunning) {
+      dagTickRef.current = 0;
+      return;
+    }
 
     let allDone = true;
     let hasRunning = false;
@@ -194,7 +241,9 @@ const CanvasWorkspace = () => {
 
       if (status === 'idle') {
         const incomingEdges = edges.filter((e) => e.target === node.id);
-        const isReady = incomingEdges.every((e) => nodeRunStatus[e.source] === 'success');
+        const isReady = incomingEdges.length === 0
+          ? true  // 源头节点（无上游）直接就绪
+          : incomingEdges.every((e) => nodeRunStatus[e.source] === 'success');
 
         if (isReady && !hasError) {
           console.log(`[DAG 引擎] 条件达成，触发节点: ${node.id}`);
@@ -205,12 +254,16 @@ const CanvasWorkspace = () => {
       }
     });
 
+    dagTickRef.current += 1;
+
     if (hasError) {
       setGlobalRunning(false);
+      message.error("🚨 有节点执行失败，流水线已暂停。可点击「断点续跑」从失败处重试！", 4);
     } else if (allDone && nodes.length > 0) {
       setGlobalRunning(false);
       message.success("✨ 太棒了！全部流水线节点执行完毕！", 3);
-    } else if (!newlyTriggered && !hasRunning && !allDone) {
+    } else if (!newlyTriggered && !hasRunning && !allDone && dagTickRef.current > 1) {
+      // 只在第二个 tick 之后才判定死锁，避免首次 tick 的竞态误判
       message.error("🚨 检测到死锁或有未连接的节点孤岛，执行强行终止！");
       setGlobalRunning(false);
     }
@@ -270,6 +323,17 @@ const CanvasWorkspace = () => {
           >
             {isGlobalRunning ? '紧急停止' : '运行全局'}
           </Button>
+
+          {hasBreakpoint && (
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={handleResumeRun}
+              type="primary"
+              style={{ fontWeight: 'bold', background: '#faad14', borderColor: '#faad14' }}
+            >
+              断点续跑
+            </Button>
+          )}
         </Space>
       </Header>
 

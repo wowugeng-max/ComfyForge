@@ -167,12 +167,11 @@ export default function ComfyUIEngineNode(props: NodeProps) {
   // 🌟 物理级中断机制：信任后端，死等报错包！
   const handleInterrupt = async () => {
     try {
-      await apiClient.post(`/api/interrupt/${id}`); // 确保有 /api 前缀
+      await apiClient.post(`/interrupt/${id}`);
       message.warning('已下发强制释放 GPU 信令，等待后端确认...');
     } catch (error) {
       message.error('中断信令发送失败 (可能引擎已空闲)');
     }
-    // ⚠️ 删掉整个 finally 块！不要在这里调用 setIsRunning(false) 和 setNodeStatus(id, 'idle')！
   };
 
   const handleSaveToAsset = async () => {
