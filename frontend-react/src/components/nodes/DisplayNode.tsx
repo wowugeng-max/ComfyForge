@@ -38,16 +38,16 @@ export default function DisplayNode(props: NodeProps) {
         getEdges().filter(e => e.source === id).forEach(edge => {
           updateNodeData(edge.target, { incoming_data: outData });
         });
-      } else {
-        // 没有数据，标记为 running，等待上游推送
-        setNodeStatus(id, 'running');
       }
+      // 没有数据时不做任何事，保持 running 状态，等 incoming_data 到来
     }
   }, [data._runSignal]);
 
-  // 🌟 DAG 感知：当 incoming_data 变化时，自动标记 success 并向下游传递
+  // 🌟 DAG 感知：当 incoming_data 变化且有值时，自动标记 success 并向下游传递
+  const prevIncomingRef = useRef(data.incoming_data);
   useEffect(() => {
-    if (data.incoming_data) {
+    if (data.incoming_data && data.incoming_data !== prevIncomingRef.current) {
+      prevIncomingRef.current = data.incoming_data;
       setNodeStatus(id, 'success');
       const outData = typeof data.incoming_data === 'object' ? data.incoming_data : { content: data.incoming_data };
       getEdges().filter(e => e.source === id).forEach(edge => {

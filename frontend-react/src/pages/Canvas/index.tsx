@@ -173,6 +173,14 @@ const CanvasWorkspace = () => {
     if (nodes.length === 0) return message.warning("画布太空了，先添点节点吧！");
 
     resetAllNodeStatus(nodes);
+
+    // 全局运行前，清空所有节点的旧数据，防止被动节点误判
+    nodes.forEach(node => {
+      if (node.type === 'display') {
+        updateNodeData(node.id, { incoming_data: null, result: null });
+      }
+    });
+
     setGlobalRunning(true);
     message.success("🚀 漫剧工业流水线，启动！");
   };
