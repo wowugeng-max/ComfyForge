@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 
 import { projectApi } from '../../api/projects';
+import apiClient from '../../api/client';
 import GenerateNode from '../../components/nodes/GenerateNode';
 import DisplayNode from '../../components/nodes/DisplayNode';
 import LoadAssetNode from '../../components/nodes/LoadAssetNode';
@@ -164,10 +165,27 @@ const CanvasWorkspace = () => {
   }, [saveMode, handleSave]);
 
   // ================= 🌟 核心新增：DAG 全局启动器 =================
-  const handleGlobalRun = () => {
+  const handleGlobalRun = async () => {
     if (isGlobalRunning) {
       setGlobalRunning(false);
-      message.info("🛑 全局流水线已急刹车！");
+
+      // 🌟 遍历所有 running 节点，逐个下发 interrupt 指令，真正切断后端任务
+      const runningNodeIds = nodes
+        .filter(n => nodeRunStatus[n.id] === 'running')
+        .map(n => n.id);
+
+      if (runningNodeIds.length > 0) {
+        message.loading({ content: `正在中止 ${runningNodeIds.length} 个运行中的节点...`, key: 'global-stop', duration: 3 });
+        const results = await Promise.allSettled(
+          runningNodeIds.map(nodeId => apiClient.post(`/interrupt/${nodeId}`))
+        );
+        const successCount = results.filter(r => r.status === 'fulfilled').length;
+        // 将被中断的节点状态标记为 error，防止 DAG 引擎残留误判
+        runningNodeIds.forEach(nodeId => setNodeStatus(nodeId, 'error'));
+        message.info({ content: `🛑 全局流水线已急刹车！(${successCount}/${runningNodeIds.length} 个节点已中止)`, key: 'global-stop', duration: 3 });
+      } else {
+        message.info("🛑 全局流水线已急刹车！");
+      }
       return;
     }
     if (nodes.length === 0) return message.warning("画布太空了，先添点节点吧！");
