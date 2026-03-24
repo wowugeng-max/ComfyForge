@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "WebSearch",
+      "WebFetch(domain:autoppt.com)",
+      "WebFetch(domain:toolin.ai)",
+      "WebFetch(domain:linux.do)"
+    ]
+  }
+}

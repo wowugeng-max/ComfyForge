@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Input, Select, Button, message, Card, Row, Col, Typography, Space, Divider, Radio } from 'antd';
+import { Form, Input, Select, Button, message, Card, Row, Col, Typography, Space, Divider, Radio, Upload } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeftOutlined, SaveOutlined, PictureOutlined,
   VideoCameraOutlined, FileTextOutlined,
-  AppstoreAddOutlined, GlobalOutlined
+  AppstoreAddOutlined, GlobalOutlined, InboxOutlined
 } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { projectApi } from '../../api/projects';
+import TagsInput from '../../components/TagsInput';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
@@ -16,6 +17,8 @@ export default function AssetCreate() {
   const [form] = Form.useForm();
   const [assetType, setAssetType] = useState<string>('prompt');
   const [projects, setProjects] = useState<any[]>([]);
+  const [uploadedImageInfo, setUploadedImageInfo] = useState<any>(null);
+  const [uploadedVideoInfo, setUploadedVideoInfo] = useState<any>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -30,9 +33,10 @@ export default function AssetCreate() {
     try {
       let data = {};
       if (assetType === 'prompt') {
-        data = { content: values.content, negative: values.negative };
+        data = { content: values.content, negative_prompt: values.negative || '' };
       } else if (assetType === 'image') {
-        data = { file_path: values.file_path, width: values.width, height: values.height, format: values.format };
+        if (!uploadedImageInfo) { message.warning('请先上传图片'); return; }
+        data = { file_path: uploadedImageInfo.file_path, width: uploadedImageInfo.width, height: uploadedImageInfo.height, format: uploadedImageInfo.format };
       } else if (assetType === 'character') {
         data = {
           core_prompt_asset_id: values.core_prompt_asset_id,
@@ -41,7 +45,8 @@ export default function AssetCreate() {
           variants: values.variants ? JSON.parse(values.variants) : {},
         };
       } else if (assetType === 'video') {
-        data = { file_path: values.file_path, width: values.width, height: values.height, duration: values.duration, fps: values.fps, format: values.format };
+        if (!uploadedVideoInfo) { message.warning('请先上传视频'); return; }
+        data = { file_path: uploadedVideoInfo.file_path, width: uploadedVideoInfo.width, height: uploadedVideoInfo.height, duration: uploadedVideoInfo.duration, fps: uploadedVideoInfo.fps, format: uploadedVideoInfo.format };
       }
 
       const payload = {
@@ -80,23 +85,62 @@ export default function AssetCreate() {
       case 'image':
         return (
           <div style={{ background: '#e6f7ff', padding: 16, borderRadius: 8, border: '1px solid #91caff' }}>
-            <Form.Item name="file_path" label="文件物理路径或 URL" rules={[{ required: true }]}>
-              <Input style={codeInputStyle} placeholder="/data/images/xxx.png 或 http://..." />
+            <Form.Item label="上传图片" required>
+              <Upload.Dragger
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                showUploadList={false}
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  const fd = new FormData();
+                  fd.append('file', file as File);
+                  try {
+                    const res = await apiClient.post('/assets/upload/image', fd, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    const info = res.data;
+                    setUploadedImageInfo(info);
+                    message.success('图片上传成功');
+                    onSuccess?.(info);
+                  } catch {
+                    message.error('图片上传失败');
+                    onError?.(new Error('upload failed'));
+                  }
+                }}
+              >
+                {uploadedImageInfo ? (
+                  <div style={{ padding: 8 }}>
+                    <img
+                      src={`/api/assets/media/${uploadedImageInfo.file_path}`}
+                      alt="preview"
+                      style={{ maxHeight: 160, maxWidth: '100%', borderRadius: 6, objectFit: 'contain' }}
+                    />
+                    <p style={{ marginTop: 8, color: '#52c41a', fontSize: 12 }}>
+                      ✓ {uploadedImageInfo.width} × {uploadedImageInfo.height} · {uploadedImageInfo.format.toUpperCase()}
+                    </p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>点击或拖拽重新上传</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="ant-upload-drag-icon"><InboxOutlined style={{ fontSize: 40, color: '#1890ff' }} /></p>
+                    <p style={{ margin: '8px 0 4px', fontWeight: 500 }}>点击或拖拽图片到此处上传</p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>支持 PNG / JPEG / WebP / GIF</p>
+                  </>
+                )}
+              </Upload.Dragger>
             </Form.Item>
             <Row gutter={16}>
               <Col span={8}>
-                <Form.Item name="width" label="图像宽度" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" addonAfter="px" />
+                <Form.Item label="宽度">
+                  <Input type="number" addonAfter="px" readOnly value={uploadedImageInfo?.width} />
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item name="height" label="图像高度" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" addonAfter="px" />
+                <Form.Item label="高度">
+                  <Input type="number" addonAfter="px" readOnly value={uploadedImageInfo?.height} />
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item name="format" label="格式" rules={[{ required: true }]}>
-                  <Input placeholder="png / jpeg / webp" />
+                <Form.Item label="格式">
+                  <Input readOnly value={uploadedImageInfo?.format} />
                 </Form.Item>
               </Col>
             </Row>
@@ -128,33 +172,57 @@ export default function AssetCreate() {
       case 'video':
         return (
           <div style={{ background: '#fff0f6', padding: 16, borderRadius: 8, border: '1px solid #ffadd2' }}>
-            <Form.Item name="file_path" label="视频物理路径或 URL" rules={[{ required: true }]}>
-              <Input style={codeInputStyle} placeholder="/data/videos/xxx.mp4" />
+            <Form.Item label="上传视频" required>
+              <Upload.Dragger
+                accept="video/mp4,video/webm,video/quicktime"
+                showUploadList={false}
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  const fd = new FormData();
+                  fd.append('file', file as File);
+                  try {
+                    const res = await apiClient.post('/assets/upload/video', fd, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    const info = res.data;
+                    setUploadedVideoInfo(info);
+                    message.success('视频上传成功');
+                    onSuccess?.(info);
+                  } catch {
+                    message.error('视频上传失败');
+                    onError?.(new Error('upload failed'));
+                  }
+                }}
+              >
+                {uploadedVideoInfo ? (
+                  <div style={{ padding: 8 }}>
+                    <VideoCameraOutlined style={{ fontSize: 40, color: '#eb2f96' }} />
+                    <p style={{ marginTop: 8, color: '#52c41a', fontSize: 12 }}>
+                      ✓ {uploadedVideoInfo.file_path.split('/').pop()} · {uploadedVideoInfo.format.toUpperCase()}
+                    </p>
+                    {uploadedVideoInfo.width > 0 && (
+                      <p style={{ color: '#8c8c8c', fontSize: 12 }}>
+                        {uploadedVideoInfo.width}×{uploadedVideoInfo.height} · {uploadedVideoInfo.duration}s · {uploadedVideoInfo.fps}fps
+                      </p>
+                    )}
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>点击或拖拽重新上传</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="ant-upload-drag-icon"><InboxOutlined style={{ fontSize: 40, color: '#eb2f96' }} /></p>
+                    <p style={{ margin: '8px 0 4px', fontWeight: 500 }}>点击或拖拽视频到此处上传</p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>支持 MP4 / WebM / MOV</p>
+                  </>
+                )}
+              </Upload.Dragger>
             </Form.Item>
             <Row gutter={16}>
-              <Col span={6}>
-                <Form.Item name="width" label="宽度" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" addonAfter="px" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item name="height" label="高度" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" addonAfter="px" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item name="duration" label="时长" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" step="0.1" addonAfter="s" />
-                </Form.Item>
-              </Col>
-              <Col span={6}>
-                <Form.Item name="fps" label="帧率" rules={[{ required: true, type: 'number', transform: (value) => Number(value) }]}>
-                  <Input type="number" addonAfter="fps" />
-                </Form.Item>
-              </Col>
+              <Col span={6}><Form.Item label="宽度"><Input type="number" addonAfter="px" readOnly value={uploadedVideoInfo?.width} /></Form.Item></Col>
+              <Col span={6}><Form.Item label="高度"><Input type="number" addonAfter="px" readOnly value={uploadedVideoInfo?.height} /></Form.Item></Col>
+              <Col span={6}><Form.Item label="时长"><Input type="number" addonAfter="s" readOnly value={uploadedVideoInfo?.duration} /></Form.Item></Col>
+              <Col span={6}><Form.Item label="帧率"><Input type="number" addonAfter="fps" readOnly value={uploadedVideoInfo?.fps} /></Form.Item></Col>
             </Row>
-            <Form.Item name="format" label="封装格式" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
-              <Input placeholder="mp4 / webm" />
+            <Form.Item label="封装格式" style={{ marginBottom: 0 }}>
+              <Input readOnly value={uploadedVideoInfo?.format} />
             </Form.Item>
           </div>
         );
@@ -235,7 +303,7 @@ export default function AssetCreate() {
               </Form.Item>
 
               <Form.Item name="tags" label={<Text strong>索引标签</Text>}>
-                <Input size="large" placeholder="如: 赛博朋克, 高清 (逗号分隔)" />
+                <TagsInput />
               </Form.Item>
 
               <Form.Item name="thumbnail" label={<Text strong>封面图 URL (可选)</Text>} tooltip="用于在资产大厅中展示的预览小图。">

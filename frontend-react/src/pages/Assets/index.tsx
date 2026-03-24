@@ -103,7 +103,7 @@ export default function AssetList() {
 
   // 🌟 核心：卡片预览区渲染器
   const renderCardPreview = (asset: Asset) => {
-    const previewUrl = asset.thumbnail || (asset.type === 'image' && asset.data?.file_path ? `http://localhost:8000/${asset.data.file_path}` : null);
+    const previewUrl = asset.thumbnail || (asset.type === 'image' && asset.data?.file_path ? `/api/assets/media/${asset.data.file_path}` : null);
 
     if (previewUrl) {
       return (

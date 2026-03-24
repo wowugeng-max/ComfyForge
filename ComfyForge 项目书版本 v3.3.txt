@@ -1,0 +1,69 @@
+🚀 ComfyForge 智能创作助理 - 项目白皮书 v3.3
+版本：v3.3
+最后更新：2026年3月4日
+
+一、项目概述
+1.1 背景与痛点
+ComfyUI 是极其强大的 AI 工作流引擎，但深度创作者常面临“资产无法系统复用（提示词、模型、模板满天飞）”和“算力调度僵化（强依赖本地单机 GPU）”的痛点。ComfyForge 旨在打造一个非侵入式的智能驾驶舱，实现资产化管理和混合算力灵活调度。
+
+1.2 核心愿景
+资产即服务：统一管理提示词、图像、视频、工作流模板等，支持拖拽式调用与血缘追溯。
+
+执行即调度 (大一统引擎)：彻底打通本地 ComfyUI (127.0.0.1)、云端算力 (RunningHub, Civitai) 与大语言模型 (Gemini, Qwen) 的界限，实现单一节点无缝切换。
+
+数据驱动架构：前端 UI 与底层逻辑解耦，通过动态接口和注册表驱动，实现新模型的“热插拔”。
+
+二、当前项目状态（截至 v3.3）
+✅ 已完成功能 (核心里程碑)
+1. 底层基建与“双注册表”架构 (极度解耦)
+
+后端引擎大一统：废弃了冗长的 if-else 工厂模式，全面引入 @ProviderRegistry 插件注册表机制。新增了 comfyui.py 终极适配器，同一套代码完美兼容本地与 RunningHub 云端代理接口。
+
+数据驱动提供商 (Provider DB)：建立了统一的算力平台数据库，支持通过 API 动态下发平台列表，前端无需硬编码。
+
+前端节点注册中心：封装了 nodeRegistry.ts，配合 React Flow，实现了画布左侧“节点库”的动态遍历与渲染。
+
+2. 核心大闸：统一 API Key 管理
+
+keys.py 路由已全面升级，支持存入 service_type (服务大类) 和 base_url (自定义网关)。
+
+支持多提供商密钥管理、定时健康监控探针 (key_tester.py)、失效计数与自动故障转移。
+
+3. 无限画布生态 (Infinite Canvas)
+
+画布基础：基于 React Flow 实现了节点的拖拽、连线、缩放及全局状态管理 (撤销/重做)。
+
+资产库拖拽闭环：AssetLibrary.tsx 侧边栏完美实现了资产的分类 (图片、视频、提示词、工作流) 与检索。利用 react-dnd 实现了将工作流 JSON 直接拖拽至算力节点内部的交互闭环。
+
+智能算力节点 (ComfyUIEngineNode)：具备动态防呆联动（选定平台后自动过滤对应 Key），支持接收拖拽资产，并已打通向后端的 /api/generate 发送渲染请求的链路。
+
+统一生成网关：app.py 中的 generate_content 接口已实现接收前端 GenerateRequest (包含 api_key_id)，动态查询明文 Key 并通过工厂分发给适配器的完整异步闭环。
+
+三、技术架构
+前端 (Frontend): React 18, TypeScript, Vite, Ant Design 5 (UI 框架), React Flow (无限画布), React DnD (拖拽引擎), Zustand (状态管理)。
+
+后端 (Backend): FastAPI (异步高性能网关), SQLAlchemy + SQLite (轻量级持久化), HTTPX (异步请求)。
+
+外部整合 (External Integrations): Google GenAI SDK (Gemini), RunningHub 代理 API, 局域网 ComfyUI WebSocket/HTTP 服务。
+
+四、下一步工作计划（Action Items）
+🎯 冲刺目标一：跑通第一张图 (ComfyUI 节点闭环)
+现状：前端已经能成功将 Workflow JSON 和选中的算力 Key 提交给后端 /api/generate。后端已能轮询并抓取到 ComfyUI 的历史记录。
+
+任务：
+
+在后端的 ComfyUIAdapter 中，精准解析 /history 接口返回的数据，提取最终的图像 URL 或 Base64。
+
+在前端的 ComfyUIEngineNode.tsx 中，将接口返回的图像数据挂载到 <img src={...} /> 进行可视化渲染。
+
+捕获生成的图像，通过后端的 save_image_from_base64 自动作为新资产存入数据库。
+
+🎯 冲刺目标二：节点生态扩展 (高级节点)
+LLM Prompt 节点：接入 GeminiAdapter 或 QwenAdapter，实现在画布上通过大语言模型自动扩写或翻译提示词，通过连线输入给 ComfyUI 节点。
+
+批量参数配置器集成：激活已有的 BulkParamConfigPanel.tsx，允许用户在节点上暴露特定的 JSON 字段（如 Seed、CFG）作为独立的输入 Handle，实现参数的可视化连线控制。
+
+🎯 冲刺目标三：视频工坊与高级编排
+视频流转：彻底激活后端的 CloudVideoLoopExecutor 和 RealVideoLoopExecutor，在前端专门的视频片段编排 UI 中实现长视频的批量生成功。
+
+血缘关系可视化：基于生成结果的 source_asset_ids，利用 React Flow 渲染资产族谱图，让每一次变体都有迹可循。

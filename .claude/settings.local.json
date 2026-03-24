@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:liblibai.feishu.cn)",
+      "Bash(grep -n \"nodeRegistry.register\" /d/MyProject/ComfyForge/frontend-react/src/components/nodes/*.tsx)",
+      "Bash(grep -r \"vertex\\\\|imagen\\\\|google.*image\" /d/MyProject/ComfyForge --include=*.py --include=*.json -i)",
+      "Bash(python -c \":*)",
+      "Bash(.venv/Scripts/python -c \":*)"
+    ]
+  }
+}

@@ -84,9 +84,32 @@ export default function DisplayNode(props: NodeProps) {
     if (!assetName.trim()) return message.warning('请输入资产名称');
     setSavingAsset(true);
     try {
+      // 从上游 incoming_data 中提取血缘信息
+      const upstream = typeof data.incoming_data === 'object' ? data.incoming_data : {};
+      const lineage: Record<string, any> = {};
+      for (const key of Object.keys(upstream)) {
+        if (key.startsWith('source_')) lineage[key] = upstream[key];
+      }
+
+      // 解析图片尺寸
+      let width: number | undefined, height: number | undefined;
+      if (mediaDims) {
+        const match = mediaDims.match(/(\d+)\s*[×x]\s*(\d+)/);
+        if (match) { width = parseInt(match[1]); height = parseInt(match[2]); }
+      }
+
+      const assetData: Record<string, any> = {
+        content: displayContent,
+        url: mediaType !== 'text' ? displayContent : undefined,
+        file_path: mediaType !== 'text' ? displayContent : undefined,
+        ...lineage,
+        ...(width ? { width } : {}),
+        ...(height ? { height } : {}),
+      };
+
       await apiClient.post('/assets/', {
         name: assetName, type: mediaType === 'video' ? 'video' : (mediaType === 'image' ? 'image' : 'prompt'),
-        data: { content: displayContent, url: mediaType !== 'text' ? displayContent : undefined, file_path: mediaType !== 'text' ? displayContent : undefined },
+        data: assetData,
         tags: ['Display_Saved'], thumbnail: mediaType === 'image' ? displayContent : undefined, project_id: projectId ? Number(projectId) : null
       });
       message.success('已保存到资产库');
@@ -96,7 +119,9 @@ export default function DisplayNode(props: NodeProps) {
 
   return (
     <BaseNode {...props}>
-      <Handle type="target" position={Position.Left} id="in" style={{ top: '50%', background: '#10b981', width: 12, height: 12 }} />
+      <Tooltip title="通用输入 (接受所有类型)" placement="left">
+        <Handle type="target" position={Position.Left} id="in" style={{ top: '50%', background: '#fa8c16', width: 12, height: 12 }} />
+      </Tooltip>
 
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
@@ -109,7 +134,7 @@ export default function DisplayNode(props: NodeProps) {
         </div>
 
         {/* 🌟 核心修改：移除容器 nodrag，让大块图片区域可以随意点击拖拽 */}
-        <div style={{ flex: 1, position: 'relative', background: mediaType === 'text' ? '#f8fafc' : '#0f172a', borderRadius: 8, border: '1px solid #cbd5e1', overflow: 'hidden', minHeight: 120 }}>
+        <div style={{ flex: 1, position: 'relative', background: mediaType === 'text' ? '#f8fafc' : '#f1f5f9', borderRadius: 8, border: '1px solid #cbd5e1', overflow: 'hidden', minHeight: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {mediaType !== 'text' && mediaDims && (
             <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
               {mediaDims}
@@ -118,9 +143,9 @@ export default function DisplayNode(props: NodeProps) {
 
           {displayContent ? (
             mediaType === 'video' ? (
-               <video src={displayContent} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
+               <video src={displayContent} controls autoPlay loop muted style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
             ) : mediaType === 'image' ? (
-               <img src={displayContent} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} alt="Display" onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
+               <img src={displayContent} style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} alt="Display" onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
             ) : (
                // 🌟 文本滚动区增加 nodrag nowheel 防止复制和滚动冲突
                <div className="nodrag nowheel" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#1e293b', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
@@ -135,7 +160,9 @@ export default function DisplayNode(props: NodeProps) {
         </div>
       </div>
 
-      <Handle type="source" position={Position.Right} id="out" style={{ top: '50%', background: '#fa8c16', width: 12, height: 12 }} />
+      <Tooltip title="通用输出" placement="right">
+        <Handle type="source" position={Position.Right} id="out" style={{ top: '50%', background: '#fa8c16', width: 12, height: 12 }} />
+      </Tooltip>
 
       <Modal title="保存资产" open={isModalVisible} onOk={handleSaveToAsset} onCancel={() => setIsModalVisible(false)} confirmLoading={savingAsset} okText="保存" cancelText="取消" width={320}>
         <Input placeholder="给这个资产起个名字吧..." value={assetName} onChange={e => setAssetName(e.target.value)} autoFocus />

@@ -99,3 +99,48 @@ To add a new provider, create an adapter in `core/adapters/`, register it with `
 
 ### State management pattern
 `canvasStore` (Zustand, no Immer middleware) holds all canvas state. `updateNodeData(id, partialData)` merges into `node.data`. History (undo/redo) is a manual snapshot stack saved before mutations.
+
+### Asset system
+
+**Backend model** (`backend/models/asset.py`):
+- `Asset` table: `id`, `type` (prompt/image/video/workflow/character), `name`, `description`, `tags` (JSON), `data` (JSON), `thumbnail`, `file_path`, `version`, `parent_id`, `source_asset_ids`, `project_id`
+- `PUT /api/assets/{id}` is **immutable versioning** — always inserts a new row with `version+1` and `parent_id` pointing to the old row. The old row is never modified.
+- `PATCH /api/assets/{id}/project` is the one exception — in-place update of `project_id` only, no version bump.
+- `project_id = NULL` means global/public asset; non-null means project-scoped.
+
+**API routes** (`backend/api/assets.py`):
+- `GET /api/assets/?is_global=true` — fetch global assets
+- `GET /api/assets/?project_id=N` — fetch project-scoped assets
+- `POST /api/assets/` — create asset (validates `data` schema by type via `ASSET_DATA_SCHEMAS`)
+- File upload for image/video is **not yet implemented** — currently assets store `file_path` (local path) or URL strings in `data.file_path`
+
+**Frontend asset library** (`stores/assetLibraryStore.ts`):
+- Zustand store: `assets`, `loading`, `filterType`, `searchText`, `scope` ('project' | 'global')
+- `fetchAssets(projectId?)` — switches URL based on `scope`
+- Asset type filter: image, prompt, video, workflow
+
+**Asset library sidebar** (`components/AssetLibrary.tsx`):
+- Shown in canvas left sidebar (`pages/Canvas/index.tsx`)
+- Dual-scope toggle: 📦 项目专属 vs 🌍 全局公共
+- Each `AssetItem` is draggable via `react-dnd` (`DndItemTypes.ASSET`)
+- Shows thumbnail preview (32×32) for image assets using `asset.thumbnail || asset.data.file_path`
+- URL-prefixed with `http://localhost:8000/` when path is not an absolute URL
+
+**Canvas ↔ Asset linkage**:
+- `LoadAssetNode` accepts dropped assets (`useDrop` with `DndItemTypes.ASSET`)
+- On drop: updates node data with asset, sets output handle color by type (text=green, image=blue, video=pink, workflow=purple)
+- On `_runSignal`: pushes `asset.data` to all downstream nodes via `updateNodeData(edge.target, { incoming_data: assetData })`
+- `DisplayNode` "固化" button saves displayed content back to asset library via `POST /api/assets/`, then calls `fetchAssets` to refresh sidebar
+
+**Planned: image/video upload** (not yet implemented):
+- Backend needs a `POST /api/assets/upload` multipart endpoint that saves file to `data/assets/images/` or `data/assets/videos/`, returns the saved `file_path`
+- Frontend Create/Edit pages need `<Upload>` component (Ant Design Dragger) replacing the raw URL text fields for `image` and `video` asset types
+- After upload, the returned `file_path` is stored in `asset.data.file_path`
+
+## 用户偏好 / User Preferences
+
+- **语言**：使用中文回复
+- **交互方式**：优先且频繁使用 AskUserQuestion 工具与用户交互
+- **写入规范**：写入内容较多时，使用 AskUserQuestion 分批次确认后再写入；写内容之前先经过用户同意；一点一点写，每部分写完后审阅
+- **Todos 管理**：不要自行更新 Todos 内容，每完成一步先征求用户反馈
+- **范围控制**：每次回复只回复用户让做的事情，做额外事情前先询问

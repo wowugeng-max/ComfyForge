@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Form, Input, Select, Button, message, Card, Row, Col, Typography, Space, Divider, Spin } from 'antd';
+import { Form, Input, Select, Button, message, Card, Row, Col, Typography, Space, Divider, Spin, Upload, Tag } from 'antd';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeftOutlined, SaveOutlined, PictureOutlined,
   VideoCameraOutlined, FileTextOutlined, ApiOutlined,
-  AppstoreAddOutlined, GlobalOutlined
+  AppstoreAddOutlined, GlobalOutlined, InboxOutlined
 } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { projectApi } from '../../api/projects';
+import TagsInput from '../../components/TagsInput';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
@@ -18,9 +19,12 @@ export default function AssetEdit() {
   const [form] = Form.useForm();
 
   const [assetType, setAssetType] = useState<string>('');
+  const [originalData, setOriginalData] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadedImageInfo, setUploadedImageInfo] = useState<any>(null);
+  const [uploadedVideoInfo, setUploadedVideoInfo] = useState<any>(null);
 
   useEffect(() => {
     // 并行拉取项目列表和资产详情
@@ -32,6 +36,7 @@ export default function AssetEdit() {
 
       const asset = assetRes.data;
       setAssetType(asset.type);
+      setOriginalData(asset.data);
 
       // 平铺数据以适应 Form
       const initialValues = {
@@ -67,9 +72,13 @@ export default function AssetEdit() {
       let data = {};
       // 重新组装 data 结构
       if (assetType === 'prompt') {
-        data = { content: values.content, negative: values.negative };
+        data = { content: values.content, negative_prompt: values.negative || '' };
       } else if (assetType === 'image') {
-        data = { file_path: values.file_path, width: values.width, height: values.height, format: values.format };
+        if (uploadedImageInfo) {
+          data = { file_path: uploadedImageInfo.file_path, width: uploadedImageInfo.width, height: uploadedImageInfo.height, format: uploadedImageInfo.format };
+        } else {
+          data = { file_path: values.file_path, width: values.width, height: values.height, format: values.format };
+        }
       } else if (assetType === 'character') {
         data = {
           core_prompt_asset_id: values.core_prompt_asset_id,
@@ -83,7 +92,11 @@ export default function AssetEdit() {
           parameters: values.parameters ? JSON.parse(values.parameters) : {},
         };
       } else if (assetType === 'video') {
-        data = { file_path: values.file_path, width: values.width, height: values.height, duration: values.duration, fps: values.fps, format: values.format };
+        if (uploadedVideoInfo) {
+          data = { file_path: uploadedVideoInfo.file_path, width: uploadedVideoInfo.width, height: uploadedVideoInfo.height, duration: uploadedVideoInfo.duration, fps: uploadedVideoInfo.fps, format: uploadedVideoInfo.format };
+        } else {
+          data = { file_path: values.file_path, width: values.width, height: values.height, duration: values.duration, fps: values.fps, format: values.format };
+        }
       }
 
       const payload = {
@@ -125,14 +138,106 @@ export default function AssetEdit() {
       case 'image':
         return (
           <div style={{ background: '#e6f7ff', padding: 16, borderRadius: 8, border: '1px solid #91caff' }}>
-            <Form.Item name="file_path" label="文件物理路径或 URL" rules={[{ required: true }]}>
-              <Input style={codeInputStyle} />
+            <Form.Item name="file_path" label="图片文件" rules={[{ required: true }]}>
+              <Upload.Dragger
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                showUploadList={false}
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  const fd = new FormData();
+                  fd.append('file', file as File);
+                  try {
+                    const res = await apiClient.post('/assets/upload/image', fd, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    const info = res.data;
+                    setUploadedImageInfo(info);
+                    form.setFieldsValue({
+                      file_path: info.file_path,
+                      width: info.width,
+                      height: info.height,
+                      format: info.format,
+                    });
+                    message.success('图片上传成功');
+                    onSuccess?.(info);
+                  } catch {
+                    message.error('图片上传失败');
+                    onError?.(new Error('upload failed'));
+                  }
+                }}
+              >
+                {uploadedImageInfo ? (
+                  <div style={{ padding: 8 }}>
+                    <img
+                      src={`/api/assets/media/${uploadedImageInfo.file_path}`}
+                      alt="preview"
+                      style={{ maxHeight: 160, maxWidth: '100%', borderRadius: 6, objectFit: 'contain' }}
+                    />
+                    <p style={{ marginTop: 8, color: '#52c41a', fontSize: 12 }}>
+                      ✓ {uploadedImageInfo.width} × {uploadedImageInfo.height} · {uploadedImageInfo.format.toUpperCase()}
+                    </p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>点击或拖拽重新上传</p>
+                  </div>
+                ) : originalData?.file_path ? (
+                  <div style={{ padding: 8 }}>
+                    <img
+                      src={originalData.file_path.startsWith('http') || originalData.file_path.startsWith('data:') ? originalData.file_path : `/api/assets/media/${originalData.file_path}`}
+                      alt="current"
+                      style={{ maxHeight: 160, maxWidth: '100%', borderRadius: 6, objectFit: 'contain' }}
+                    />
+                    <p style={{ color: '#8c8c8c', fontSize: 12, marginTop: 8 }}>点击或拖拽新图片替换</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="ant-upload-drag-icon"><InboxOutlined style={{ fontSize: 40, color: '#1890ff' }} /></p>
+                    <p style={{ margin: '8px 0 4px', fontWeight: 500 }}>点击或拖拽新图片替换（留空保留原文件）</p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>支持 PNG / JPEG / WebP / GIF</p>
+                  </>
+                )}
+              </Upload.Dragger>
             </Form.Item>
             <Row gutter={16}>
-              <Col span={8}><Form.Item name="width" label="图像宽度" rules={[{ required: true, type: 'number', transform: Number }]}><Input type="number" addonAfter="px" /></Form.Item></Col>
-              <Col span={8}><Form.Item name="height" label="图像高度" rules={[{ required: true, type: 'number', transform: Number }]}><Input type="number" addonAfter="px" /></Form.Item></Col>
-              <Col span={8}><Form.Item name="format" label="格式" rules={[{ required: true }]}><Input /></Form.Item></Col>
+              <Col span={8}><Form.Item name="width" label="图像宽度"><Input type="number" addonAfter="px" readOnly /></Form.Item></Col>
+              <Col span={8}><Form.Item name="height" label="图像高度"><Input type="number" addonAfter="px" readOnly /></Form.Item></Col>
+              <Col span={8}><Form.Item name="format" label="格式"><Input readOnly /></Form.Item></Col>
             </Row>
+            {originalData?.source_model && (
+              <div style={{ marginTop: 12, background: '#f0f5ff', padding: 16, borderRadius: 8, border: '1px solid #adc6ff' }}>
+                <Text strong style={{ color: '#1d39c4', fontSize: 13, display: 'block', marginBottom: 12 }}>🧬 AI 生成溯源</Text>
+                <Row gutter={[16, 8]}>
+                  <Col span={8}><Text type="secondary" style={{ fontSize: 11 }}>厂商</Text><div style={{ fontWeight: 600 }}>{originalData.source_provider || '-'}</div></Col>
+                  <Col span={8}><Text type="secondary" style={{ fontSize: 11 }}>模型</Text><div style={{ fontWeight: 600 }}>{originalData.source_model}</div></Col>
+                  <Col span={8}><Text type="secondary" style={{ fontSize: 11 }}>模式</Text><div style={{ fontWeight: 600 }}>{originalData.source_mode || '-'}</div></Col>
+                </Row>
+                {originalData.source_aspect_ratio && (
+                  <Row gutter={[16, 8]} style={{ marginTop: 8 }}>
+                    <Col span={8}><Text type="secondary" style={{ fontSize: 11 }}>画面比例</Text><div style={{ fontWeight: 600 }}>{originalData.source_aspect_ratio}</div></Col>
+                    <Col span={8}><Text type="secondary" style={{ fontSize: 11 }}>分辨率</Text><div style={{ fontWeight: 600 }}>{originalData.source_size || '-'}</div></Col>
+                  </Row>
+                )}
+                {originalData.source_prompt && (
+                  <div style={{ marginTop: 10 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>提示词</Text>
+                    <div style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px solid #d9d9d9', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto', marginTop: 4 }}>{originalData.source_prompt}</div>
+                  </div>
+                )}
+                {originalData.source_system && (
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>系统提示词</Text>
+                    <div style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px solid #d9d9d9', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 80, overflow: 'auto', marginTop: 4 }}>{originalData.source_system}</div>
+                  </div>
+                )}
+                {originalData.source_camera_params && Object.keys(originalData.source_camera_params).length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 11 }}>摄像机参数</Text>
+                    <Row gutter={[8, 4]} style={{ marginTop: 4 }}>
+                      {Object.entries(originalData.source_camera_params).map(([k, v]) => (
+                        <Col key={k}><Tag color="blue" style={{ fontSize: 11 }}>{k}: {String(v)}</Tag></Col>
+                      ))}
+                    </Row>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       case 'workflow':
@@ -147,6 +252,97 @@ export default function AssetEdit() {
           </div>
         );
       // character 和 video 同理略过，直接用 Create 的填入即可
+      case 'character':
+        return (
+          <div style={{ background: '#fff7e6', padding: 16, borderRadius: 8, border: '1px solid #ffd591' }}>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="core_prompt_asset_id" label="核心提示词 资产 ID" rules={[{ required: true }]}>
+                  <Input type="number" prefix={<FileTextOutlined style={{ color: '#bfbfbf' }} />} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="lora_asset_id" label="LoRA 资产 ID (选填)">
+                  <Input type="number" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="image_asset_ids" label="参考图像 资产 ID 矩阵">
+              <Input placeholder="多个 ID 请用逗号分隔" />
+            </Form.Item>
+            <Form.Item name="variants" label="角色变体参数 (JSON)" style={{ marginBottom: 0 }}>
+              <Input.TextArea rows={5} style={{ fontFamily: 'monospace' }} />
+            </Form.Item>
+          </div>
+        );
+      case 'video':
+        return (
+          <div style={{ background: '#fff0f6', padding: 16, borderRadius: 8, border: '1px solid #ffadd2' }}>
+            <Form.Item name="file_path" label="视频文件" rules={[{ required: true }]}>
+              <Upload.Dragger
+                accept="video/mp4,video/webm,video/quicktime"
+                showUploadList={false}
+                customRequest={async ({ file, onSuccess, onError }) => {
+                  const fd = new FormData();
+                  fd.append('file', file as File);
+                  try {
+                    const res = await apiClient.post('/assets/upload/video', fd, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    const info = res.data;
+                    setUploadedVideoInfo(info);
+                    form.setFieldsValue({
+                      file_path: info.file_path,
+                      width: info.width,
+                      height: info.height,
+                      duration: info.duration,
+                      fps: info.fps,
+                      format: info.format,
+                    });
+                    message.success('视频上传成功');
+                    onSuccess?.(info);
+                  } catch {
+                    message.error('视频上传失败');
+                    onError?.(new Error('upload failed'));
+                  }
+                }}
+              >
+                {uploadedVideoInfo ? (
+                  <div style={{ padding: 8 }}>
+                    <VideoCameraOutlined style={{ fontSize: 40, color: '#eb2f96' }} />
+                    <p style={{ marginTop: 8, color: '#52c41a', fontSize: 12 }}>
+                      ✓ {uploadedVideoInfo.file_path.split('/').pop()} · {uploadedVideoInfo.format.toUpperCase()}
+                    </p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>点击或拖拽重新上传</p>
+                  </div>
+                ) : originalData?.file_path ? (
+                  <div style={{ padding: 8 }}>
+                    <VideoCameraOutlined style={{ fontSize: 40, color: '#eb2f96' }} />
+                    <p style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>
+                      当前文件: {originalData.file_path.split('/').pop()}
+                    </p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>点击或拖拽新视频替换</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="ant-upload-drag-icon"><InboxOutlined style={{ fontSize: 40, color: '#eb2f96' }} /></p>
+                    <p style={{ margin: '8px 0 4px', fontWeight: 500 }}>点击或拖拽新视频替换（留空保留原文件）</p>
+                    <p style={{ color: '#8c8c8c', fontSize: 12 }}>支持 MP4 / WebM / MOV</p>
+                  </>
+                )}
+              </Upload.Dragger>
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={6}><Form.Item name="width" label="宽度"><Input type="number" addonAfter="px" readOnly /></Form.Item></Col>
+              <Col span={6}><Form.Item name="height" label="高度"><Input type="number" addonAfter="px" readOnly /></Form.Item></Col>
+              <Col span={6}><Form.Item name="duration" label="时长"><Input type="number" addonAfter="s" readOnly /></Form.Item></Col>
+              <Col span={6}><Form.Item name="fps" label="帧率"><Input type="number" addonAfter="fps" readOnly /></Form.Item></Col>
+            </Row>
+            <Form.Item name="format" label="封装格式" style={{ marginBottom: 0 }}>
+              <Input readOnly />
+            </Form.Item>
+          </div>
+        );
       default: return null;
     }
   };
@@ -205,7 +401,7 @@ export default function AssetEdit() {
                 </Select>
               </Form.Item>
               <Form.Item name="tags" label={<Text strong>索引标签</Text>}>
-                <Input size="large" placeholder="如: 赛博朋克, 高清 (逗号分隔)" />
+                <TagsInput />
               </Form.Item>
               <Form.Item name="thumbnail" label={<Text strong>封面图 URL (可选)</Text>}>
                 <Input size="large" />

@@ -65,7 +65,7 @@ export default function AssetDetail() {
   const renderVisualizer = () => {
     if (!asset) return null;
     const { type, data, thumbnail } = asset;
-    const src = thumbnail || (data?.file_path ? `http://localhost:8000/${data.file_path}` : null);
+    const src = thumbnail || (data?.file_path ? (data.file_path.startsWith('http') || data.file_path.startsWith('data:') ? data.file_path : `/api/assets/media/${data.file_path}`) : null);
 
     if (type === 'image') {
       return (
@@ -169,6 +169,43 @@ export default function AssetDetail() {
               </Text>
             </div>
           </Card>
+
+          {/* 🧬 AI 生成溯源 */}
+          {asset.data?.source_model && (
+            <Card bordered={false} style={{ borderRadius: 12, boxShadow: '0 1px 2px rgba(0,0,0,0.03)', marginTop: 16 }}>
+              <Title level={5} style={{ marginBottom: 16, color: '#1d39c4' }}>🧬 AI 生成溯源</Title>
+              <div style={{ marginBottom: 12 }}>
+                <Row gutter={[16, 12]}>
+                  <Col span={12}><Text type="secondary" style={{ fontSize: 11, display: 'block' }}>厂商</Text><Text strong>{asset.data.source_provider || '-'}</Text></Col>
+                  <Col span={12}><Text type="secondary" style={{ fontSize: 11, display: 'block' }}>模型</Text><Text strong>{asset.data.source_model}</Text></Col>
+                  <Col span={12}><Text type="secondary" style={{ fontSize: 11, display: 'block' }}>模式</Text><Text strong>{asset.data.source_mode || '-'}</Text></Col>
+                  {asset.data.source_aspect_ratio && <Col span={12}><Text type="secondary" style={{ fontSize: 11, display: 'block' }}>比例 / 分辨率</Text><Text strong>{asset.data.source_aspect_ratio} ({asset.data.source_size || '-'})</Text></Col>}
+                </Row>
+              </div>
+              {asset.data.source_prompt && (
+                <div style={{ marginBottom: 10 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>提示词</Text>
+                  <div style={{ background: '#f8fafc', padding: 10, borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 150, overflow: 'auto' }}>{asset.data.source_prompt}</div>
+                </div>
+              )}
+              {asset.data.source_system && (
+                <div style={{ marginBottom: 10 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>系统提示词</Text>
+                  <div style={{ background: '#f8fafc', padding: 10, borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 100, overflow: 'auto' }}>{asset.data.source_system}</div>
+                </div>
+              )}
+              {asset.data.source_camera_params && Object.keys(asset.data.source_camera_params).length > 0 && (
+                <div>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>摄像机参数</Text>
+                  <Space wrap size={[4, 4]}>
+                    {Object.entries(asset.data.source_camera_params).map(([k, v]) => (
+                      <Tag key={k} color="blue" style={{ fontSize: 11 }}>{k}: {String(v)}</Tag>
+                    ))}
+                  </Space>
+                </div>
+              )}
+            </Card>
+          )}
         </Col>
       </Row>
     </div>

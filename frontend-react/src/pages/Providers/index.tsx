@@ -451,10 +451,7 @@ export default function ProviderManager() {
               <Option value="gemini_native">Google Gemini 原生</Option>
             </Select>
           </Form.Item>
-          <Form.Item name="default_base_url" label="官方 API 网关 (Base URL)">
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              💡 提示：所有未配置高级路由的请求，默认拼接此地址。
-            </Text>
+          <Form.Item name="default_base_url" label="官方 API 网关 (Base URL)" extra="💡 提示：所有未配置高级路由的请求，默认拼接此地址。">
             <Input prefix={<GlobalOutlined />} placeholder="https://..." style={{ borderRadius: '6px' }} />
           </Form.Item>
 

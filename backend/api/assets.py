@@ -1,5 +1,8 @@
 # backend/api/assets.py
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -8,6 +11,14 @@ from datetime import datetime
 from ..db import get_db  # 统一导入
 from ..models import Asset, Project
 from ..models.schemas import ASSET_DATA_SCHEMAS
+
+IMAGES_DIR = "data/assets/images"
+VIDEOS_DIR = "data/assets/videos"
+os.makedirs(IMAGES_DIR, exist_ok=True)
+os.makedirs(VIDEOS_DIR, exist_ok=True)
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/quicktime", "video/x-msvideo"}
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
@@ -170,6 +181,107 @@ def delete_asset(asset_id: int, db: Session = Depends(get_db)):
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+
+    # 清理磁盘文件
+    if asset.data and isinstance(asset.data, dict):
+        file_path = asset.data.get("file_path", "")
+        if file_path and not file_path.startswith("http"):
+            abs_path = os.path.abspath(file_path)
+            if os.path.isfile(abs_path):
+                try:
+                    os.remove(abs_path)
+                except OSError:
+                    pass
+
     db.delete(asset)
     db.commit()
     return
+
+
+@router.post("/upload/image")
+async def upload_image(file: UploadFile = File(...)):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式: {file.content_type}")
+
+    content = await file.read()
+
+    # 用 PIL 读取尺寸
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(content))
+        width, height = img.size
+        fmt = (img.format or "PNG").lower()
+        if fmt == "jpeg":
+            fmt = "jpg"
+    except Exception:
+        raise HTTPException(status_code=400, detail="无法解析图片文件")
+
+    ext = os.path.splitext(file.filename or "")[-1] or f".{fmt}"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(IMAGES_DIR, filename)
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    return {
+        "file_path": file_path.replace("\\", "/"),
+        "width": width,
+        "height": height,
+        "format": fmt,
+    }
+
+
+@router.post("/upload/video")
+async def upload_video(file: UploadFile = File(...)):
+    if file.content_type not in ALLOWED_VIDEO_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的视频格式: {file.content_type}")
+
+    content = await file.read()
+    ext = os.path.splitext(file.filename or ".mp4")[-1] or ".mp4"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(VIDEOS_DIR, filename)
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # 尝试用 ffprobe 获取视频信息，失败则返回默认值
+    width, height, duration, fps = 0, 0, 0.0, 0.0
+    try:
+        import subprocess, json
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", file_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        info = json.loads(result.stdout)
+        vs = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
+        if vs:
+            width = int(vs.get("width", 0))
+            height = int(vs.get("height", 0))
+            duration = float(vs.get("duration", 0))
+            parts = vs.get("r_frame_rate", "30/1").split("/")
+            fps = round(int(parts[0]) / int(parts[1]), 2) if len(parts) == 2 and int(parts[1]) else 30.0
+    except Exception:
+        pass
+
+    fmt = ext.lstrip(".").lower()
+    return {
+        "file_path": file_path.replace("\\", "/"),
+        "width": width,
+        "height": height,
+        "duration": duration,
+        "fps": fps,
+        "format": fmt,
+    }
+
+
+@router.get("/media/{file_path:path}")
+async def serve_media(file_path: str):
+    """提供 data/assets/ 下的图片和视频文件"""
+    base_dir = os.path.abspath("data/assets")
+    # 兼容前端传来的带 data/assets/ 前缀的路径
+    clean = file_path.lstrip("/")
+    if clean.startswith("data/assets/"):
+        clean = clean[len("data/assets/"):]
+    full_path = os.path.abspath(os.path.join(base_dir, clean))
+    if not full_path.startswith(base_dir) or not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(full_path)

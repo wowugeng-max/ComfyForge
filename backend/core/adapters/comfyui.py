@@ -2,6 +2,8 @@
 import asyncio
 import httpx
 import json
+import base64
+import uuid
 import urllib.parse
 from typing import Dict, Any
 from .base import BaseAdapter
@@ -25,22 +27,22 @@ class ComfyUIAdapter(BaseAdapter):
         self._is_interrupted = False
         self._current_base_url = None
 
-        # 🌟 新增：真正的物理级释放 GPU 方法
-        async def interrupt(self) -> bool:
-            self._is_interrupted = True
-            if not self._current_base_url:
-                return False
+    # 🌟 新增：真正的物理级释放 GPU 方法
+    async def interrupt(self) -> bool:
+        self._is_interrupted = True
+        if not self._current_base_url:
+            return False
 
-            try:
-                # 向局域网或云端物理机发送真实的 /interrupt 请求
-                interrupt_url = f"{self._current_base_url}/interrupt"
-                print(f"🛑 [ComfyUI Engine] 正在强行中断显存计算: {interrupt_url}")
-                async with httpx.AsyncClient() as client:
-                    res = await client.post(interrupt_url, timeout=5.0)
-                    return res.status_code == 200
-            except Exception as e:
-                print(f"⚠️ [ComfyUI Engine] 物理机释放指令发送失败: {e}")
-                return False
+        try:
+            # 向局域网或云端物理机发送真实的 /interrupt 请求
+            interrupt_url = f"{self._current_base_url}/interrupt"
+            print(f"🛑 [ComfyUI Engine] 正在强行中断显存计算: {interrupt_url}")
+            async with httpx.AsyncClient() as client:
+                res = await client.post(interrupt_url, timeout=5.0)
+                return res.status_code == 200
+        except Exception as e:
+            print(f"⚠️ [ComfyUI Engine] 物理机释放指令发送失败: {e}")
+            return False
 
     async def generate(self, request_params: Dict[str, Any]) -> Dict[str, Any]:
         prompt = request_params.get("prompt")
@@ -86,6 +88,10 @@ class ComfyUIAdapter(BaseAdapter):
         await notify(f"📦 正在连接算力网关: {actual_base_url} ...")
 
         async with httpx.AsyncClient() as client:
+            # 🌟 提交前：扫描工作流中的 base64/URL 图片，上传到 ComfyUI 并替换为文件名
+            actual_workflow = await self._upload_inline_images(client, actual_base_url, actual_workflow, notify)
+            payload = {"prompt": actual_workflow}
+
             try:
                 # 🌟 提交前第一道防线检查
                 if self._is_interrupted:
@@ -179,3 +185,60 @@ class ComfyUIAdapter(BaseAdapter):
                 error_str = f"请求异常: {str(e)}"
                 await notify(f"❌ {error_str}")
                 return {"success": False, "error": error_str}
+
+    async def _upload_inline_images(self, client: httpx.AsyncClient, base_url: str, workflow: dict, notify) -> dict:
+        """扫描工作流 JSON，将 base64/URL 图片上传到 ComfyUI 并替换为文件名"""
+        upload_url = f"{base_url}/upload/image"
+
+        for node_id, node_data in workflow.items():
+            if not isinstance(node_data, dict):
+                continue
+            inputs = node_data.get("inputs", {})
+            for field_name, value in inputs.items():
+                if not isinstance(value, str):
+                    continue
+
+                image_bytes = None
+                ext = "png"
+
+                # base64 data URL
+                if value.startswith("data:image/"):
+                    try:
+                        header, b64data = value.split(",", 1)
+                        if "jpeg" in header or "jpg" in header:
+                            ext = "jpg"
+                        elif "webp" in header:
+                            ext = "webp"
+                        image_bytes = base64.b64decode(b64data)
+                    except Exception:
+                        continue
+
+                # 远程 URL 图片
+                elif value.startswith("http") and any(value.lower().endswith(e) for e in [".png", ".jpg", ".jpeg", ".webp"]):
+                    try:
+                        resp = await client.get(value, timeout=30.0)
+                        if resp.status_code == 200:
+                            image_bytes = resp.content
+                            for e in ["jpg", "jpeg", "webp", "png"]:
+                                if value.lower().endswith(f".{e}"):
+                                    ext = "jpg" if e == "jpeg" else e
+                                    break
+                    except Exception:
+                        continue
+
+                if image_bytes:
+                    filename = f"comfyforge_{uuid.uuid4().hex[:8]}.{ext}"
+                    try:
+                        files = {"image": (filename, image_bytes, f"image/{ext}")}
+                        res = await client.post(upload_url, files=files, timeout=30.0)
+                        if res.status_code == 200:
+                            uploaded_name = res.json().get("name", filename)
+                            inputs[field_name] = uploaded_name
+                            await notify(f"📤 已上传图片到引擎: {uploaded_name}")
+                            print(f"📤 [ComfyUI] 上传图片 {field_name}@node{node_id} → {uploaded_name}")
+                        else:
+                            print(f"⚠️ [ComfyUI] 图片上传失败: {res.status_code} {res.text[:200]}")
+                    except Exception as e:
+                        print(f"⚠️ [ComfyUI] 图片上传异常: {e}")
+
+        return workflow

@@ -13,10 +13,17 @@ class ImageData(BaseModel):
     height: Optional[int] = None
     format: Optional[str] = "png"
 
+    model_config = ConfigDict(extra='allow')  # 保留血缘追踪等额外字段
+
 class VideoData(BaseModel):
     file_path: str
+    width: Optional[int] = None
+    height: Optional[int] = None
     duration: Optional[float] = None
-    fps: Optional[int] = None
+    fps: Optional[float] = None
+    format: Optional[str] = None
+
+    model_config = ConfigDict(extra='allow')  # 保留血缘追踪等额外字段
 
 class PromptData(BaseModel):
     content: str
@@ -30,6 +37,20 @@ class WorkflowData(BaseModel):
 
     model_config = ConfigDict(extra='allow')  # 允许存入任何额外的 JSON 字段
 
+# 节点配置资产（单节点存为资产）
+class NodeConfigData(BaseModel):
+    nodeType: str  # 'generate', 'comfyUIEngine' 等
+    config: Dict[str, Any]  # 节点的配置数据
+
+    model_config = ConfigDict(extra='allow')
+
+# 节点模板资产（节点组+连线存为模板）
+class NodeTemplateData(BaseModel):
+    nodes: List[Dict[str, Any]]  # [{type, relativePosition, config}]
+    edges: List[Dict[str, Any]]  # [{sourceIndex, targetIndex, sourceHandle, targetHandle}]
+
+    model_config = ConfigDict(extra='allow')
+
 # 定义别名以兼容不同模块的导入习惯
 ImageAssetData = ImageData
 VideoAssetData = VideoData
@@ -41,7 +62,9 @@ ASSET_DATA_SCHEMAS = {
     "image": ImageData,
     "video": VideoData,
     "prompt": PromptData,
-    "workflow": WorkflowData
+    "workflow": WorkflowData,
+    "node_config": NodeConfigData,
+    "node_template": NodeTemplateData,
 }
 
 # --- 2. 资产 API 交互模型 ---

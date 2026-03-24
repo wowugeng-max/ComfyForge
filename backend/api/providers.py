@@ -33,8 +33,11 @@ class ProviderOut(ProviderBase):
 # --- 2. 路由实现 (解决 405 错误) ---
 
 @router.get("/", response_model=List[ProviderOut])
-def list_providers(db: Session = Depends(get_db)):
-    return db.query(Provider).all()
+def list_providers(service_type: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(Provider)
+    if service_type:
+        query = query.filter(Provider.service_type == service_type)
+    return query.all()
 
 
 @router.post("/")

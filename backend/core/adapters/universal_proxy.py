@@ -66,10 +66,10 @@ class UniversalProxyAdapter(BaseAdapter):
                 val = self._render_template(v, params)
                 if val is not None:
                     rendered[k] = val
-            return rendered
+            return rendered if rendered else None
         elif isinstance(template, list):
-            return [self._render_template(item, params) for item in template if
-                    self._render_template(item, params) is not None]
+            items = [self._render_template(item, params) for item in template]
+            return [item for item in items if item is not None]
         elif isinstance(template, str):
             stripped = template.strip()
             if stripped.startswith("{{") and stripped.endswith("}}"):
@@ -138,6 +138,18 @@ class UniversalProxyAdapter(BaseAdapter):
         if not self.base_url:
             return {"success": False, "error": f"Provider [{self.provider.id}] 未配置基础网关"}
 
+        # 如果 image_url 是本地路径，转成 base64 data URI
+        image_url = request_params.get("image_url", "")
+        if image_url and not image_url.startswith(("http", "data:")) or (image_url and "localhost" in image_url):
+            import base64, os, mimetypes
+            # 从 URL 提取本地路径
+            local_path = image_url.replace("http://localhost:8000/", "").replace("http://127.0.0.1:8000/", "")
+            if os.path.exists(local_path):
+                mime = mimetypes.guess_type(local_path)[0] or "image/png"
+                with open(local_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                request_params["image_url"] = f"data:{mime};base64,{b64}"
+
         req_type = request_params.get("type", "text")
         route_config = self._get_route_config(req_type)
         headers = self._build_headers()
@@ -166,7 +178,8 @@ class UniversalProxyAdapter(BaseAdapter):
         if self._is_interrupted:
             return {"success": False, "error": "任务被手动中断"}
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
             try:
                 # ====== 这里是我们开始与云端通信 ======
                 response = await client.post(endpoint, headers=headers, json=payload)
@@ -248,6 +261,27 @@ class UniversalProxyAdapter(BaseAdapter):
                 else:
                     if "choices" in data:
                         content = data["choices"][0]["message"]["content"]
+
+                # 智能提取图片/视频内容
+                if is_image_or_video and isinstance(content, str):
+                    import re
+                    # 1. 尝试从 markdown 格式提取: ![...](url)
+                    md_match = re.search(r'!\[.*?\]\((https?://[^\s)]+)\)', content)
+                    if md_match:
+                        content = md_match.group(1)
+                    # 2. 尝试提取 data:image URI
+                    elif 'data:image' in content:
+                        data_match = re.search(r'(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)', content)
+                        if data_match:
+                            content = data_match.group(1)
+                    # 3. 尝试提取 http URL
+                    elif not content.startswith(('http', 'data:')) :
+                        url_match = re.search(r'(https?://[^\s"\'<>]+\.(?:png|jpg|jpeg|webp|gif|mp4|webm)[^\s"\'<>]*)', content)
+                        if url_match:
+                            content = url_match.group(1)
+                        # 4. 裸 base64 字符串
+                        elif len(content) > 200 and re.match(r'^[A-Za-z0-9+/=\s]+$', content[:100]):
+                            content = f"data:image/png;base64,{content.strip()}"
 
                 return {"success": True, "type": req_type, "content": content, "raw_response": data}
 

@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useDrop } from 'react-dnd';
+import { DndItemTypes } from '../../constants/dnd';
 import ReactFlow, {
   Background, Controls, MiniMap, useNodesState, useEdgesState,
   addEdge, type Connection, type Edge, ReactFlowProvider, type ReactFlowInstance
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 // 🌟 引入了 Select 组件用于保存模式选择
-import { Button, Typography, Space, Tooltip, message, Layout, Tag, Divider, Input, Select } from 'antd';
+import { Button, Typography, Space, Tooltip, message, Layout, Tag, Divider, Input, Select, Modal } from 'antd';
 import {
   ArrowLeftOutlined, SaveOutlined, PlayCircleOutlined, ClearOutlined, SearchOutlined,
   // 🌟 新增的图标
@@ -22,6 +24,8 @@ import LoadAssetNode from '../../components/nodes/LoadAssetNode';
 import AssetLibrary from '../../components/AssetLibrary';
 import { useCanvasStore } from '../../stores/canvasStore';
 import ComfyUIEngineNode from '../../components/nodes/ComfyUIEngineNode';
+import GroupNode from '../../components/nodes/GroupNode';
+import { getHandleDataType, areTypesCompatible } from '../../utils/handleTypes';
 
 const { Text, Title } = Typography;
 const { Header, Sider, Content } = Layout;
@@ -31,6 +35,7 @@ const nodeTypes = {
   display: DisplayNode,
   loadAsset: LoadAssetNode,
   comfyUIEngine: ComfyUIEngineNode,
+  nodeGroup: GroupNode,
 };
 
 const AVAILABLE_NODES = [
@@ -54,10 +59,11 @@ const CanvasWorkspace = () => {
     nodes, edges,
     onNodesChange, onEdgesChange, onConnect,
     addNode, setCanvasData, updateNodeData,
-    undo, redo, past, future,
+    undo, redo, past, future, saveHistory,
     // 🌟 DAG 引擎特供
     isGlobalRunning, setGlobalRunning,
-    nodeRunStatus, setNodeStatus, resetAllNodeStatus, smartResetNodeStatus
+    nodeRunStatus, setNodeStatus, resetAllNodeStatus, smartResetNodeStatus,
+    createGroup, dissolveGroup, executeFission
   } = useCanvasStore();
 
   const [projectName, setProjectName] = useState('加载中...');
@@ -70,6 +76,117 @@ const CanvasWorkspace = () => {
   const [menuConfig, setMenuConfig] = useState<{ x: number, y: number, flowX: number, flowY: number } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const clickTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  // 🎬 一键漫剧
+  const [comicModalOpen, setComicModalOpen] = useState(false);
+  const [comicConfig, setComicConfig] = useState({
+    story: '',
+    panelCount: 6,
+    style: '',
+    platform: '通用',
+  });
+
+  // 节点组右键菜单
+  const [groupMenuConfig, setGroupMenuConfig] = useState<{ x: number; y: number; selectedNodeIds: string[]; dissolveGroupId?: string } | null>(null);
+  const closeGroupMenu = useCallback(() => setGroupMenuConfig(null), []);
+
+  // 💾 处理资产拖入画布：node_config 创建单节点，node_template 创建节点组
+  const [, canvasDrop] = useDrop(() => ({
+    accept: DndItemTypes.ASSET,
+    drop: (item: { asset: any }, monitor) => {
+      const asset = item.asset;
+      if (!asset || !reactFlowInstance) return;
+
+      // 只处理 node_config 和 node_template，其他类型由 LoadAssetNode 的 useDrop 处理
+      if (asset.type !== 'node_config' && asset.type !== 'node_template') return;
+
+      const clientOffset = monitor.getClientOffset();
+      if (!clientOffset || !reactFlowWrapper.current) return;
+
+      const bounds = reactFlowWrapper.current.getBoundingClientRect();
+      const position = reactFlowInstance.project({
+        x: clientOffset.x - bounds.left,
+        y: clientOffset.y - bounds.top,
+      });
+
+      saveHistory();
+
+      if (asset.type === 'node_config') {
+        // 单节点配置：创建对应类型的节点，预填配置
+        const { nodeType, config } = asset.data || {};
+        if (!nodeType) return;
+        const newNode = {
+          id: getId(),
+          type: nodeType,
+          position,
+          data: { ...config, label: asset.name || config?.label || nodeType },
+          style: { width: 360, height: 380 },
+        };
+        addNode(newNode);
+        message.success(`📦 已从资产恢复「${asset.name}」节点`);
+
+      } else if (asset.type === 'node_template') {
+        // 节点模板：批量创建节点+连线
+        const { nodes: tplNodes, edges: tplEdges } = asset.data || {};
+        if (!tplNodes || tplNodes.length === 0) return;
+
+        const idMap: Record<number, string> = {};
+        const newNodes: any[] = [];
+        const newEdges: any[] = [];
+
+        tplNodes.forEach((tpl: any, i: number) => {
+          const newId = getId();
+          idMap[i] = newId;
+          newNodes.push({
+            id: newId,
+            type: tpl.type,
+            position: {
+              x: position.x + (tpl.relativePosition?.x || 0),
+              y: position.y + (tpl.relativePosition?.y || 0),
+            },
+            data: { ...tpl.config, label: tpl.config?.label || tpl.type },
+            style: { width: 360, height: 380 },
+          });
+        });
+
+        (tplEdges || []).forEach((tpl: any) => {
+          const sourceId = idMap[tpl.sourceIndex];
+          const targetId = idMap[tpl.targetIndex];
+          if (sourceId && targetId) {
+            newEdges.push({
+              id: `edge_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+              source: sourceId,
+              target: targetId,
+              sourceHandle: tpl.sourceHandle,
+              targetHandle: tpl.targetHandle,
+            });
+          }
+        });
+
+        // 批量添加
+        const store = useCanvasStore.getState();
+        store.setNodes([...store.nodes, ...newNodes]);
+        store.setEdges([...store.edges, ...newEdges]);
+        message.success(`📦 已从模板恢复「${asset.name}」（${newNodes.length} 个节点）`);
+      }
+    },
+  }), [reactFlowInstance, addNode]);
+
+  const onSelectionContextMenu = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const selectedNodes = nodes.filter(n => n.selected);
+    if (selectedNodes.length < 2) {
+      // 单选一个 GroupNode → 显示解散选项
+      if (selectedNodes.length === 1 && selectedNodes[0].type === 'nodeGroup') {
+        setGroupMenuConfig({ x: event.clientX, y: event.clientY, selectedNodeIds: [], dissolveGroupId: selectedNodes[0].id });
+        return;
+      }
+      return;
+    }
+    // 不允许已在组内的节点再次编组
+    if (selectedNodes.some(n => n.parentNode)) return;
+    setGroupMenuConfig({ x: event.clientX, y: event.clientY, selectedNodeIds: selectedNodes.map(n => n.id) });
+  }, [nodes]);
 
   useEffect(() => {
     if (id) {
@@ -90,6 +207,32 @@ const CanvasWorkspace = () => {
     setSearchTerm('');
   }, []);
 
+  // Ctrl+B 快捷键：单节点静音 / 多选创建静音组
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!((e.ctrlKey || e.metaKey) && e.key === 'b')) return;
+      e.preventDefault();
+      const selected = nodes.filter(n => n.selected && n.type !== 'nodeGroup');
+      if (selected.length === 0) return;
+      if (selected.length === 1) {
+        // 单节点：切换自身 _muted
+        updateNodeData(selected[0].id, { _muted: !selected[0].data._muted });
+      } else {
+        // 多选：创建静音组
+        const ids = selected.filter(n => !n.parentNode).map(n => n.id);
+        if (ids.length >= 2) {
+          const gid = createGroup(ids, '节点组');
+          if (gid) {
+            updateNodeData(gid, { _muted: true });
+            ids.forEach(nid => updateNodeData(nid, { _muted: true }));
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [nodes, updateNodeData, createGroup]);
+
   const onPaneClick = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     if (clickTimeout.current) {
@@ -103,6 +246,7 @@ const CanvasWorkspace = () => {
       clickTimeout.current = setTimeout(() => {
         clickTimeout.current = null;
         closeMenu();
+        closeGroupMenu();
       }, 250);
     }
   }, [reactFlowInstance, closeMenu]);
@@ -138,6 +282,18 @@ const CanvasWorkspace = () => {
       setSaving(false);
     }
   }, [reactFlowInstance, id]);
+
+  // Ctrl+S 快捷键：快速保存
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleSave]);
 
   useEffect(() => {
     if (saveMode === 'realtime') {
@@ -241,19 +397,82 @@ const CanvasWorkspace = () => {
     message.success("⚡ 断点续跑启动！已跳过成功节点");
   };
 
-  // 判断是否有可续跑的断点（有 success 且有非 success 的节点）
+  // ================= 连线类型校验 =================
+  const isValidConnection = useCallback((connection: Connection) => {
+    const sourceNode = nodes.find(n => n.id === connection.source);
+    const targetNode = nodes.find(n => n.id === connection.target);
+    if (!sourceNode || !targetNode) return false;
+
+    const sourceType = getHandleDataType(sourceNode.type, connection.sourceHandle ?? undefined, sourceNode.data, 'source');
+    const targetType = getHandleDataType(targetNode.type, connection.targetHandle ?? undefined, targetNode.data, 'target');
+
+    return areTypesCompatible(sourceType, targetType);
+  }, [nodes]);
+
+  // 判断是否有可续跑的断点（有 success 且有非 success 的节点，但不能有 running 的）
   const hasBreakpoint = !isGlobalRunning && nodes.some(n => nodeRunStatus[n.id] === 'success') && nodes.some(n => {
     const s = nodeRunStatus[n.id];
-    return s === 'error' || s === 'idle' || s === 'running';
-  });
+    return s === 'error' || s === 'idle';
+  }) && !nodes.some(n => nodeRunStatus[n.id] === 'running');
 
   // ================= 🌟 核心大脑：DAG 拓扑自动驱动引擎 =================
   const dagTickRef = useRef(0);
+  const fissionDoneRef = useRef<Set<string>>(new Set()); // 记录已裂变过的节点，避免重复裂变
   useEffect(() => {
     if (!isGlobalRunning) {
       dagTickRef.current = 0;
+      fissionDoneRef.current.clear();
       return;
     }
+
+    // ── 裂变检测：在常规 tick 之前，检查是否有 success 节点需要裂变 ──
+    for (const node of nodes) {
+      if (node.type === 'nodeGroup') continue;
+      const status = nodeRunStatus[node.id] || 'idle';
+      if (status !== 'success') continue;
+      if (fissionDoneRef.current.has(node.id)) continue;
+
+      const result = node.data?.result;
+      if (result && typeof result === 'object' && result._fission && Array.isArray(result.items) && result.items.length > 1) {
+        const expectedCountRaw = node.data?._fissionExpectedCount;
+        const expectedCount = Number.isFinite(Number(expectedCountRaw)) ? Number(expectedCountRaw) : null;
+        const actualCount = result.items.length;
+
+        // 三次保险（执行侧硬闸）：裂变前最终校验数量
+        if (expectedCount !== null && actualCount !== expectedCount) {
+          fissionDoneRef.current.add(node.id); // 避免重复告警
+          message.warning(`裂变执行已阻断：节点期望 ${expectedCount} 条，实际 ${actualCount} 条`, 4);
+          console.warn(`[DAG 引擎] 裂变阻断，node=${node.id}, expected=${expectedCount}, actual=${actualCount}`);
+          continue;
+        }
+
+        // 标记为已裂变，防止下一轮 tick 重复
+        fissionDoneRef.current.add(node.id);
+        console.log(`[DAG 引擎] 🔀 检测到裂变信号，节点 ${node.id} 裂变 ${actualCount} 份`);
+
+        const clonedRootIds = executeFission(node.id, result.items);
+
+        // 为原始模板节点（第一个）注入第一个 item
+        const downEdges = edges.filter(e => e.source === node.id);
+        for (const edge of downEdges) {
+          updateNodeData(edge.target, { incoming_data: result.items[0] });
+        }
+
+        // 为裂变出的克隆节点注入对应的 item（跳过第一个，它是原始节点）
+        for (let i = 1; i < clonedRootIds.length; i++) {
+          updateNodeData(clonedRootIds[i], { incoming_data: result.items[i] });
+        }
+
+        message.info(`🔀 裂变完成！已创建 ${actualCount} 个并行分支`, 3);
+        // 裂变后跳出，让下一轮 tick 自然触发裂变出的节点
+        return;
+      }
+    }
+
+    // 预计算被静音的组
+    const mutedGroupIds = new Set(
+      nodes.filter(n => n.type === 'nodeGroup' && n.data._muted).map(n => n.id)
+    );
 
     let allDone = true;
     let hasRunning = false;
@@ -261,7 +480,28 @@ const CanvasWorkspace = () => {
     let hasError = false;
 
     nodes.forEach((node) => {
+      // 跳过 group 节点本身（不参与 DAG 执行）
+      if (node.type === 'nodeGroup') return;
+
       const status = nodeRunStatus[node.id] || 'idle';
+
+      // 被静音组内的节点 或 单节点静音 → 直接旁路
+      const isNodeMuted = !!node.data?._muted || (node.parentNode && mutedGroupIds.has(node.parentNode));
+      if (isNodeMuted) {
+        if (status === 'idle') {
+          setNodeStatus(node.id, 'success');
+          // 透传上游数据给下游
+          const outEdges = edges.filter(e => e.source === node.id);
+          const inEdges = edges.filter(e => e.target === node.id);
+          if (inEdges.length > 0 && outEdges.length > 0) {
+            const srcNode = nodes.find(n => n.id === inEdges[0].source);
+            const passthrough = srcNode?.data.result || srcNode?.data.incoming_data;
+            if (passthrough) outEdges.forEach(e => updateNodeData(e.target, { incoming_data: passthrough }));
+          }
+        }
+        return;
+      }
+
       if (status === 'error') hasError = true;
       if (status === 'running') hasRunning = true;
       if (status !== 'success') allDone = false;
@@ -294,7 +534,107 @@ const CanvasWorkspace = () => {
       message.error("🚨 检测到死锁或有未连接的节点孤岛，执行强行终止！");
       setGlobalRunning(false);
     }
-  }, [isGlobalRunning, nodeRunStatus, nodes, edges, updateNodeData, setNodeStatus, setGlobalRunning]);
+  }, [isGlobalRunning, nodeRunStatus, nodes, edges, updateNodeData, setNodeStatus, setGlobalRunning, executeFission]);
+
+  // 🎬 一键漫剧：自动创建分镜大师→生图→Display 流水线
+  const createComicPipeline = useCallback((config: typeof comicConfig) => {
+    if (!config.story.trim()) { message.warning('请输入故事或创意描述'); return; }
+
+    saveHistory();
+
+    const baseX = 100;
+    const baseY = 100;
+    const gapX = 420;
+
+    // 1. 创建分镜大师节点（GenerateNode, chat 模式, 裂变开启）
+    const storyboardId = getId();
+    const storyboardSystemPrompt = `你是一位专业的分镜师和 Prompt Engineer。用户会给你一段故事或创意描述，你需要将其拆解为恰好 ${config.panelCount} 个分镜画面。
+
+硬性要求（必须全部满足）：
+1. 输出语言：每个分镜必须是英文图片提示词（Prompt）
+2. 每个分镜需包含：主体、动作、表情、场景、光影、镜头构图、画面细节
+3. ${config.style ? `整体画风: ${config.style}` : '整体画风需统一且与故事匹配'}
+4. 目标平台: ${config.platform}
+5. 输出数量必须严格等于 ${config.panelCount} 条，不能多也不能少
+6. 输出格式必须是“纯 JSON 数组”，数组元素必须是字符串
+7. 禁止输出 Markdown 代码块（例如 \`\`\`json）
+8. 禁止输出任何解释、标题、前后缀文本，只能输出 JSON 数组本体
+9. 如果你不确定，也必须输出合法 JSON 数组，不要输出自然语言
+
+输出示例（仅示例，不可照抄）：
+["Cinematic anime frame, ...", "Cinematic anime frame, ..."]`;
+
+    const storyboardNode = {
+      id: storyboardId,
+      type: 'generate',
+      position: { x: baseX, y: baseY },
+      data: {
+        label: '🎬 分镜大师',
+        mode: 'chat',
+        prompt: config.story,
+        _fissionEnabled: true,
+        _fissionExpectedCount: config.panelCount,
+        _customLabel: true,
+        selectedRole: '_free_agent',
+        params: {},
+        _systemPromptOverride: storyboardSystemPrompt,
+      },
+      style: { width: 360, height: 420 },
+    };
+
+    // 2. 创建生图节点（GenerateNode, text_to_image 模式, 作为裂变模板）
+    const imageGenId = getId();
+    const imageGenNode = {
+      id: imageGenId,
+      type: 'generate',
+      position: { x: baseX + gapX, y: baseY },
+      data: {
+        label: '🖼️ 分镜绘图',
+        mode: 'text_to_image',
+        prompt: '',
+        _customLabel: true,
+        selectedRole: '_free_agent',
+        params: {},
+      },
+      style: { width: 360, height: 380 },
+    };
+
+    // 3. 创建 Display 节点
+    const displayId = getId();
+    const displayNode = {
+      id: displayId,
+      type: 'display',
+      position: { x: baseX + gapX * 2, y: baseY },
+      data: { label: '📺 分镜预览', _customLabel: true },
+      style: { width: 300, height: 300 },
+    };
+
+    // 4. 创建连线
+    const edge1 = {
+      id: `edge_comic_1_${Date.now()}`,
+      source: storyboardId,
+      target: imageGenId,
+      sourceHandle: 'out',
+      targetHandle: 'text',
+    };
+    const edge2 = {
+      id: `edge_comic_2_${Date.now()}`,
+      source: imageGenId,
+      target: displayId,
+      sourceHandle: 'out',
+      targetHandle: 'in',
+    };
+
+    // 批量添加
+    const store = useCanvasStore.getState();
+    store.setNodes([...store.nodes, storyboardNode as any, imageGenNode as any, displayNode as any]);
+    store.setEdges([...store.edges, edge1, edge2]);
+
+    // 关闭 Modal
+    setComicModalOpen(false);
+
+    message.success('🎬 漫剧流水线已创建！请为两个大脑节点选择 Key/Model，然后点击「运行全局」');
+  }, [saveHistory, addNode]);
 
   const filteredNodes = AVAILABLE_NODES.filter(n => n.label.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -361,6 +701,13 @@ const CanvasWorkspace = () => {
               断点续跑
             </Button>
           )}
+
+          <Button
+            onClick={() => setComicModalOpen(true)}
+            style={{ fontWeight: 'bold', borderColor: '#f59e0b', color: '#f59e0b' }}
+          >
+            🎬 一键漫剧
+          </Button>
         </Space>
       </Header>
 
@@ -380,18 +727,34 @@ const CanvasWorkspace = () => {
               <Text type="secondary" style={{ fontSize: 13 }}>现在可以在右侧画布<strong style={{ color: '#ff4d4f' }}>双击空白处</strong>呼出搜索菜单啦！就像 ComfyUI 一样。</Text>
             </div>
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <AssetLibrary projectId={Number(id)} />
+              <AssetLibrary
+                projectId={Number(id)}
+                onAddToCanvas={(asset) => {
+                  const position = reactFlowInstance?.screenToFlowPosition({
+                    x: (window.innerWidth - 320) / 2 + 320,
+                    y: window.innerHeight / 2,
+                  }) ?? { x: 300, y: 200 };
+                  addNode({
+                    id: getId(),
+                    type: 'loadAsset',
+                    position,
+                    data: { label: asset.name, asset }
+                  });
+                  message.success(`「${asset.name}」已发送到画布`);
+                }}
+              />
             </div>
           </div>
         </Sider>
 
-        <Content ref={reactFlowWrapper} style={{ background: '#f0f2f5', position: 'relative' }}>
+        <Content ref={(el: HTMLDivElement | null) => { (reactFlowWrapper as any).current = el; canvasDrop(el); }} style={{ background: '#f0f2f5', position: 'relative' }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            isValidConnection={isValidConnection}
             onInit={setReactFlowInstance}
             nodeTypes={nodeTypes}
             fitView
@@ -399,6 +762,13 @@ const CanvasWorkspace = () => {
             onPaneClick={onPaneClick}
             onNodeClick={closeMenu}
             onPaneContextMenu={onPaneContextMenu}
+            onSelectionContextMenu={onSelectionContextMenu}
+            onNodeContextMenu={(event, node) => {
+              if (node.type === 'nodeGroup') {
+                event.preventDefault();
+                setGroupMenuConfig({ x: event.clientX, y: event.clientY, selectedNodeIds: [], dissolveGroupId: node.id });
+              }
+            }}
             deleteKeyCode={['Backspace', 'Delete']}
             selectionKeyCode={['Shift', 'Control', 'Meta']}
           >
@@ -436,8 +806,107 @@ const CanvasWorkspace = () => {
               </div>
             </div>
           )}
+
+          {/* 节点组右键菜单 */}
+          {groupMenuConfig && (
+            <div
+              style={{
+                position: 'fixed', left: groupMenuConfig.x, top: groupMenuConfig.y, zIndex: 9999,
+                background: '#fff', boxShadow: '0 12px 24px rgba(0,0,0,0.2)',
+                borderRadius: 8, width: 180, border: '1px solid #d9d9d9',
+                animation: 'zoom-in 0.15s ease-out', overflow: 'hidden', padding: '4px',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {groupMenuConfig.selectedNodeIds.length > 0 && (
+                <div
+                  onClick={() => { createGroup(groupMenuConfig.selectedNodeIds, '节点组'); closeGroupMenu(); }}
+                  style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: 6, transition: 'background 0.2s' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#e6f4ff'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <Text strong style={{ fontSize: 13 }}>📦 创建节点组</Text>
+                </div>
+              )}
+              {groupMenuConfig.dissolveGroupId && (
+                <div
+                  onClick={() => { dissolveGroup(groupMenuConfig.dissolveGroupId!); closeGroupMenu(); }}
+                  style={{ padding: '8px 12px', cursor: 'pointer', borderRadius: 6, transition: 'background 0.2s' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#fff1f0'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <Text strong style={{ fontSize: 13, color: '#ff4d4f' }}>🔓 解散节点组</Text>
+                </div>
+              )}
+            </div>
+          )}
         </Content>
       </Layout>
+
+      {/* 🎬 一键漫剧 Modal */}
+      <Modal
+        title="🎬 一键漫剧"
+        open={comicModalOpen}
+        onCancel={() => setComicModalOpen(false)}
+        onOk={() => createComicPipeline(comicConfig)}
+        okText="创建流水线"
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '8px 0' }}>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>故事 / 创意描述</Text>
+            <Input.TextArea
+              rows={4}
+              placeholder="输入一段故事、一句创意，或一个场景描述..."
+              value={comicConfig.story}
+              onChange={e => setComicConfig(prev => ({ ...prev, story: e.target.value }))}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>分镜数量</Text>
+              <Select
+                value={comicConfig.panelCount}
+                onChange={v => setComicConfig(prev => ({ ...prev, panelCount: v }))}
+                style={{ width: '100%' }}
+                options={[
+                  { label: '4 格', value: 4 },
+                  { label: '6 格', value: 6 },
+                  { label: '8 格', value: 8 },
+                  { label: '12 格', value: 12 },
+                ]}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>目标平台</Text>
+              <Select
+                value={comicConfig.platform}
+                onChange={v => setComicConfig(prev => ({ ...prev, platform: v }))}
+                style={{ width: '100%' }}
+                options={[
+                  { label: '通用', value: '通用' },
+                  { label: '抖音', value: '抖音' },
+                  { label: '快手', value: '快手' },
+                  { label: '小红书', value: '小红书' },
+                  { label: 'B站', value: 'B站' },
+                ]}
+              />
+            </div>
+          </div>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>画风描述（可选）</Text>
+            <Input
+              placeholder="如：日漫风格、赛博朋克、水墨画..."
+              value={comicConfig.style}
+              onChange={e => setComicConfig(prev => ({ ...prev, style: e.target.value }))}
+            />
+          </div>
+          <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 12px', fontSize: 13, color: '#ad6800' }}>
+            💡 创建后需要为分镜大师和分镜绘图两个节点分别选择 Key/Model，然后点击「运行全局」即可自动裂变并发生图
+          </div>
+        </div>
+      </Modal>
     </Layout>
   );
 };

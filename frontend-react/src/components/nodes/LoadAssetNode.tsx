@@ -90,7 +90,7 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
     if (!asset) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Empty description="拖拽资产到此" image={Empty.PRESENTED_IMAGE_SIMPLE} /></div>;
 
     const isMedia = asset.type === 'image' || asset.type === 'video';
-    const previewUrl = asset.thumbnail || (asset.data?.file_path ? (asset.data.file_path.startsWith('http') ? asset.data.file_path : `http://localhost:8000/${asset.data.file_path}`) : null);
+    const previewUrl = asset.thumbnail || (asset.data?.file_path ? (asset.data.file_path.startsWith('http') ? asset.data.file_path : `/api/assets/media/${asset.data.file_path}`) : null);
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', gap: 8 }}>
@@ -106,7 +106,7 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
         </div>
 
         {/* 🌟 核心修改：移除容器的 nodrag，只给文字输入框保留 nodrag + nowheel */}
-        <div style={{ flex: 1, position: 'relative', background: isMedia ? '#0f172a' : '#ffffff', borderRadius: 8, border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden', minHeight: 140 }}>
+        <div style={{ flex: 1, position: 'relative', background: isMedia ? '#f1f5f9' : '#ffffff', borderRadius: 8, border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden', minHeight: 80, display: isMedia ? 'flex' : 'block', alignItems: 'center', justifyContent: 'center' }}>
           {isMedia && mediaDims && (
             <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
               {mediaDims}
@@ -115,9 +115,9 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
 
           {isMedia ? (
             asset.type === 'video' || (previewUrl && previewUrl.match(/\.(mp4|webm|mov)(\?|$)/i)) ? (
-              <video src={previewUrl} controls loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
+              <video src={previewUrl} controls loop muted style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
             ) : (
-              <img src={previewUrl} alt="preview" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
+              <img src={previewUrl} alt="preview" style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
             )
           ) : (
             <TextArea
@@ -149,7 +149,7 @@ const LoadAssetNode: React.FC<NodeProps> = (props) => {
   };
 
   return (
-    <BaseNode {...props} data={{...data, label: asset ? `📦 ${asset.name}` : '加载资产'}}>
+    <BaseNode {...props} data={{...data, label: data._customLabel ? data.label : (asset ? `📦 ${asset.name}` : '加载资产')}}>
       {renderHandles()}
       <div ref={drop} style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', backgroundColor: isOver ? 'rgba(24, 144, 255, 0.05)' : 'transparent', transition: 'all 0.3s' }}>
         {renderPreview()}

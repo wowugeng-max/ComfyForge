@@ -4,6 +4,7 @@ import { nodeRegistry } from '../../utils/nodeRegistry';
 import './GenerateNode';
 import './DisplayNode';
 import './ComfyUIEngineNode';
+import './GroupNode';
 
 
 export const nodeTypes = nodeRegistry.getNodeTypes();

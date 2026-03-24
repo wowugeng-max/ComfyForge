@@ -1,25 +1,31 @@
 // frontend-react/src/components/nodes/GenerateNode.tsx
-import React, { useState, useEffect, useRef } from 'react';
-import { type NodeProps, useReactFlow, Handle, Position } from 'reactflow';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
+import { type NodeProps, useReactFlow, useUpdateNodeInternals, Handle, Position } from 'reactflow';
 import { useParams } from 'react-router-dom';
 import { BaseNode } from './BaseNode';
 import { nodeRegistry } from '../../utils/nodeRegistry';
-import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch } from 'antd';
-import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, DownOutlined, UpOutlined, StarFilled, SaveOutlined,StopOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { Select, Input, Button, message, Spin, InputNumber, Typography, Tooltip, Slider, Switch, Tag, Space, Divider } from 'antd';
+import { MessageOutlined, PictureOutlined, EyeOutlined, VideoCameraOutlined, StarFilled, SaveOutlined, StopOutlined, PlayCircleOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
 import apiClient from '../../api/client';
 import { useCanvasStore } from '../../stores/canvasStore';
+import { useAssetLibraryStore, type Asset } from '../../stores/assetLibraryStore';
+import { getHandleDataType, getTypeLabel, getTypeColor } from '../../utils/handleTypes';
+import AspectRatioSelector, { AspectRatioTrigger, AspectRatioPanel, ASPECT_RATIOS, getAspectRatioSize, getAspectRatioLabel, type AspectRatioValue } from '../AspectRatioSelector';
+import CameraControl, { CameraTrigger, CameraPanel, buildCameraPromptSuffix, type CustomCameraOptions } from '../CameraControl';
+import { CameraMovementTrigger, CameraMovementPanel, type CameraMovementPreset } from '../CameraMovement';
 
 const { TextArea } = Input;
 const { Text } = Typography;
 
-const SYSTEM_ROLES = {
-  'free_agent': { label: '🧠 自由智能体', prompt: '你是一个万能 AI 助手，严格遵循用户指令。' },
-  'storyboard': { label: '🎬 分镜大师', prompt: '你是顶级分镜导演。严格按剧本输出分镜画面描述，用极简英文 Tag 格式，便于直接转 ComfyUI/SD。' },
-  'fashion': { label: '👗 服饰设计大师', prompt: '你是时尚设计师。输出服装设计，并生成英文 Prompt。' },
-  'script': { label: '📝 好莱坞金牌编剧', prompt: '你是好莱坞金牌编剧。扩写场景描述，不仅要无中生有，还能解读现成的文本、小说、书籍等，极具画面感。并且要能一次性生成全部的剧本。' },
-  'prompt_engineer': { label: '🔄 提示词优化大师', prompt: '你是顶级 Prompt Engineer。把输入转化为极致详细的英文 Prompt，并给出负面 Prompt。' },
-  'translator': { label: '🌍 中英双语翻译官', prompt: '专业本地化翻译。把中文翻译成最适合 AI 生成的英文，自动添加 highly detailed 等画质词。' }
-};
+// 一键预设：点击即创建到资产库
+const PRESET_ROLES = [
+  { label: '🔄 提示词优化大师', name: '提示词优化大师', prompt: '你是顶级 Prompt Engineer。把输入转化为极致详细的英文 Prompt，并给出负面 Prompt。' },
+  { label: '📝 金牌编剧大师', name: '金牌编剧大师', prompt: '你是好莱坞金牌编剧。扩写场景描述，不仅要无中生有，还能解读现成的文本、小说、书籍等，极具画面感。并且要能一次性生成全部的剧本。' },
+];
+
+// 默认兜底角色（不存资产库，永远存在）
+const DEFAULT_ROLE = { id: '_free_agent', name: '🧠 自由智能体', prompt: '你是一个万能 AI 助手，严格遵循用户指令。' };
 
 const MODALITIES = [
   { id: 'chat', icon: <MessageOutlined />, label: 'CHAT' },
@@ -30,13 +36,46 @@ const MODALITIES = [
   { id: 'image_to_video', icon: <VideoCameraOutlined />, label: 'I2V' }
 ];
 
+// 🔀 从 LLM 回复中提取 JSON 数组（容错：去除 markdown 代码块包裹）
+function extractJsonArray(text: string): any[] | null {
+  // 去除 ```json ... ``` 包裹
+  let cleaned = text.replace(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g, '$1').trim();
+  // 尝试直接解析
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+  // 尝试提取第一个 [...] 片段
+  const match = cleaned.match(/\[[\s\S]*\]/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  return null;
+}
+
+
+
 const GenerateNode: React.FC<NodeProps> = (props) => {
   const { id, data, isConnectable } = props;
   const { id: projectId } = useParams<{ id: string }>();
 
   const updateNodeData = useCanvasStore(state => state.updateNodeData);
   const setNodeStatus = useCanvasStore(state => state.setNodeStatus);
+  const fetchAssets = useAssetLibraryStore(state => state.fetchAssets);
   const { getEdges, getNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  // 检查自身或父组是否静音
+  const isMuted = useCanvasStore(state => {
+    const self = state.nodes.find(n => n.id === id);
+    if (self?.data?._muted) return true;
+    if (!self?.parentNode) return false;
+    const parent = state.nodes.find(n => n.id === self.parentNode);
+    return !!parent?.data?._muted;
+  });
 
   const [loading, setLoading] = useState(false);
   const [keys, setKeys] = useState<any[]>([]);
@@ -55,10 +94,104 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
   const [progressMsg, setProgressMsg] = useState<string>('');
   const [savingAsset, setSavingAsset] = useState(false);
 
-  const [selectedRole, setSelectedRole] = useState<string>(data.selectedRole || 'free_agent');
+  // 🌟 模式切换后通知 ReactFlow 更新 handle 注册（否则新出现的 handle 连不上线）
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [mode, id, updateNodeInternals]);
+
+  const [selectedRole, setSelectedRole] = useState<string>(data.selectedRole || DEFAULT_ROLE.id);
   const [isRoleCollapsed, setIsRoleCollapsed] = useState<boolean>(true);
+  const [roleAssets, setRoleAssets] = useState<Asset[]>([]);
+
+  // 从资产库加载 tag='SystemRole' 的 prompt 资产
+  useEffect(() => {
+    apiClient.get('/assets/?is_global=true').then(res => {
+      const roles = res.data.filter((a: any) => a.type === 'prompt' && a.tags?.includes('SystemRole'));
+      setRoleAssets(roles);
+    }).catch(() => {});
+  }, []);
+
+  // 构建角色选项列表（兜底 + 资产库）
+  const roleOptions = [
+    { label: DEFAULT_ROLE.name, value: DEFAULT_ROLE.id, prompt: DEFAULT_ROLE.prompt },
+    ...roleAssets.map(a => ({ label: a.name, value: String(a.id), prompt: a.data?.content || '' })),
+  ];
+
+  // 获取当前选中角色的 prompt
+  const getSelectedRolePrompt = () => {
+    const found = roleOptions.find(r => r.value === selectedRole);
+    return found?.prompt || DEFAULT_ROLE.prompt;
+  };
+
+  // 一键创建预设角色到资产库（已存在则直接选中）
+  const handleCreatePresetRole = async (preset: typeof PRESET_ROLES[0]) => {
+    const existing = roleAssets.find(a => a.name === preset.name);
+    if (existing) {
+      setSelectedRole(String(existing.id));
+      updateNodeData(id, { selectedRole: String(existing.id) });
+      message.info(`「${preset.name}」已存在，已自动选中`);
+      return;
+    }
+    try {
+      const res = await apiClient.post('/assets/', {
+        type: 'prompt', name: preset.name,
+        data: { content: preset.prompt },
+        tags: ['SystemRole'],
+        project_id: null,
+      });
+      setRoleAssets(prev => [...prev, res.data]);
+      setSelectedRole(String(res.data.id));
+      updateNodeData(id, { selectedRole: String(res.data.id) });
+      message.success(`「${preset.name}」已创建到资产库`);
+    } catch { message.error('创建预设失败'); }
+  };
   const [showOnlyFavorites, setShowOnlyFavorites] = useState<boolean>(true);
   const [showPreview, setShowPreview] = useState<boolean>(data.showPreview ?? true);
+  const [cameraParams, setCameraParams] = useState<Record<string, string>>(data.cameraParams || {});
+  const [customCameraOptions, setCustomCameraOptions] = useState<CustomCameraOptions>(data.customCameraOptions || {});
+  const [customMovements, setCustomMovements] = useState<CameraMovementPreset[]>(data.customMovements || []);
+  const [aspectRatioValue, setAspectRatioValue] = useState<AspectRatioValue>({
+    aspectRatio: data.aspectRatio || '',
+    customWidth: data.customWidth || 1920,
+    customHeight: data.customHeight || 1080,
+  });
+  const aspectRatio = aspectRatioValue.aspectRatio;
+  const customWidth = aspectRatioValue.customWidth;
+  const customHeight = aspectRatioValue.customHeight;
+  const [configOpen, setConfigOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<'ratio' | 'camera' | 'movement' | null>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number } | null>(null);
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  // 计算浮层位置：节点 DOM 的屏幕坐标
+  const updatePanelPos = useCallback(() => {
+    if (!nodeRef.current) return;
+    const rect = nodeRef.current.closest('.react-flow__node')?.getBoundingClientRect();
+    if (!rect) return;
+    setPanelPos({ top: rect.bottom + 8, left: rect.left });
+  }, []);
+
+  useEffect(() => {
+    if (!configOpen) return;
+    updatePanelPos();
+    const canvas = document.querySelector('.react-flow__viewport');
+    const observer = new MutationObserver(updatePanelPos);
+    if (canvas) observer.observe(canvas, { attributes: true, attributeFilter: ['transform', 'style'] });
+    window.addEventListener('resize', updatePanelPos);
+    // 点击面板外部关闭
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-config-panel]') && !target.closest('.react-flow__node')) {
+        setConfigOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updatePanelPos);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [configOpen, updatePanelPos]);
 
   const isAgentMode = mode === 'chat' || mode === 'vision';
 
@@ -72,6 +205,27 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   useEffect(() => { setMediaDims(''); }, [data.result?.content]);
 
+  // WebSocket 连接 — 仅在节点 id 变化时建立，用 ref 保持稳定
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsCallbacksRef = useRef({ updateNodeData, setNodeStatus, getEdges });
+  wsCallbacksRef.current = { updateNodeData, setNodeStatus, getEdges };
+
+  // 血缘上下文 ref，供 WebSocket 回调读取
+  const lineageRef = useRef<Record<string, any>>({});
+  useEffect(() => {
+    const providerName = keys.find(k => k.id === selectedKey)?.provider || data.provider || '';
+    const ratioSize = aspectRatio === 'custom' ? `${customWidth}*${customHeight}` : (aspectRatio ? ASPECT_RATIOS.find(r => r.value === aspectRatio)?.size : '');
+    lineageRef.current = {
+      source_provider: providerName,
+      source_model: selectedModel,
+      source_mode: mode,
+      source_prompt: prompt,
+      source_aspect_ratio: aspectRatio || null,
+      source_size: ratioSize || null,
+      source_camera_params: Object.keys(cameraParams).length > 0 ? cameraParams : null,
+    };
+  }, [keys, selectedKey, selectedModel, mode, prompt, aspectRatio, customWidth, customHeight, cameraParams, data.provider]);
+
   useEffect(() => {
     let wsURL = '';
     if (import.meta.env.DEV) {
@@ -81,23 +235,75 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       wsURL = `${apiBaseURL.replace(/^http/, 'ws').replace(/\/$/, '')}/ws/${id}`;
     }
     const ws = new WebSocket(wsURL);
+    wsRef.current = ws;
 
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        const { updateNodeData: upd, setNodeStatus: sns, getEdges: ge } = wsCallbacksRef.current;
         if (payload.type === 'status') {
           setProgressMsg(payload.message);
         } else if (payload.type === 'result') {
           setGenerating(false);
           setProgressMsg('');
-          updateNodeData(id, { result: payload.data });
-          setNodeStatus(id, 'success');
+          const resultWithLineage = typeof payload.data === 'object'
+            ? { ...payload.data, ...lineageRef.current }
+            : { content: payload.data, ...lineageRef.current };
+
+          // 🔀 裂变输出：如果开启了裂变模式，尝试将结果解析为数组
+          const nodeData = useCanvasStore.getState().nodes.find(n => n.id === id)?.data;
+          const fissionEnabled = nodeData?._fissionEnabled;
+          const expectedCountRaw = nodeData?._fissionExpectedCount;
+          const expectedCount = Number.isFinite(Number(expectedCountRaw)) ? Number(expectedCountRaw) : null;
+          let finalResult = resultWithLineage;
+
+          if (fissionEnabled) {
+            const contentStr = resultWithLineage.content || (typeof payload.data === 'string' ? payload.data : '');
+            if (typeof contentStr === 'string' && contentStr.trim()) {
+              try {
+                // 尝试从 LLM 回复中提取 JSON 数组，并严格收敛为非空字符串数组
+                const parsed = extractJsonArray(contentStr);
+                const normalizedItems = Array.isArray(parsed)
+                  ? parsed
+                      .map((item) => {
+                        if (typeof item === 'string') return item.trim();
+                        if (item && typeof item === 'object') {
+                          const candidate = (item as any).prompt ?? (item as any).text ?? (item as any).content ?? '';
+                          return typeof candidate === 'string' ? candidate.trim() : '';
+                        }
+                        return '';
+                      })
+                      .filter((item) => item.length > 0)
+                  : [];
+
+                const countMatched = expectedCount === null || normalizedItems.length === expectedCount;
+
+                if (normalizedItems.length > 1 && countMatched) {
+                  finalResult = { ...resultWithLineage, _fission: true, items: normalizedItems };
+                  console.log(`[GenerateNode] 🔀 裂变模式：解析出 ${normalizedItems.length} 个有效元素`);
+                } else if (normalizedItems.length > 1 && !countMatched) {
+                  message.warning(`裂变数量校验失败：期望 ${expectedCount} 条，实际 ${normalizedItems.length} 条，已回退普通输出`);
+                  console.warn(`[GenerateNode] 裂变数量不匹配，expected=${expectedCount}, actual=${normalizedItems.length}`);
+                } else if (parsed) {
+                  console.warn('[GenerateNode] 裂变模式：JSON 数组有效元素不足，已回退普通输出');
+                }
+              } catch (e) {
+                console.warn('[GenerateNode] 裂变解析失败，按普通结果处理', e);
+              }
+            }
+          }
+
+          upd(id, { result: finalResult });
+          sns(id, 'success');
           message.success('🧠 AI 思考完成！');
 
-          const currentEdges = getEdges();
-          currentEdges.filter(e => e.source === id).forEach(edge => {
-            updateNodeData(edge.target, { incoming_data: payload.data });
-          });
+          // 如果是裂变结果，不在这里推送下游（由 DAG 引擎裂变逻辑处理）
+          if (!finalResult._fission) {
+            const currentEdges = ge();
+            currentEdges.filter(e => e.source === id).forEach(edge => {
+              upd(edge.target, { incoming_data: finalResult });
+            });
+          }
         } else if (payload.type === 'error') {
           setGenerating(false);
           setProgressMsg('');
@@ -109,8 +315,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
         setNodeStatus(id, 'error');
       }
     };
-    return () => ws.close();
-  }, [id, updateNodeData, setNodeStatus, getEdges]);
+    return () => { ws.close(); wsRef.current = null; };
+  }, [id]);
 
   useEffect(() => {
     apiClient.get('/keys/').then(res => setKeys(res.data.filter((k: any) => k.is_active))).catch(() => {});
@@ -133,8 +339,8 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
   useEffect(() => {
     const selectedProvider = keys.find(k => k.id === selectedKey)?.provider;
-    updateNodeData(id, { api_key_id: selectedKey, mode, model_name: selectedModel, prompt, params, selectedRole, showPreview, provider: selectedProvider });
-  }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, id, updateNodeData, keys]);
+    updateNodeData(id, { api_key_id: selectedKey, mode, model_name: selectedModel, prompt, params, selectedRole, showPreview, provider: selectedProvider, cameraParams, customMovements, aspectRatio, customWidth, customHeight });
+  }, [selectedKey, mode, selectedModel, prompt, params, selectedRole, showPreview, cameraParams, customMovements, aspectRatio, customWidth, customHeight, id, updateNodeData, keys]);
 
   const handleRun = async () => {
     if (!selectedKey || !selectedModel) { setNodeStatus(id, 'error'); return message.warning('请完整选择 Key 和 模型'); }
@@ -159,18 +365,23 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
 
       if (!finalPromptText && !incomingImage) { setNodeStatus(id, 'error'); setGenerating(false); return message.warning('请输入指令或连线素材节点'); }
 
+      // 拼接摄像机参数到 prompt
+      const cameraSuffix = buildCameraPromptSuffix(cameraParams);
+      if (cameraSuffix) finalPromptText = (finalPromptText || '') + cameraSuffix;
+
       const selectedProvider = keys.find(k => k.id === selectedKey)?.provider || data.provider;
-      const payload: any = { api_key_id: selectedKey, provider: selectedProvider, model: selectedModel, type: mode, prompt: finalPromptText, params: { ...params, client_id: id } };
+      const ratioSize = aspectRatio === 'custom' ? `${customWidth}*${customHeight}` : (aspectRatio ? ASPECT_RATIOS.find(r => r.value === aspectRatio)?.size : '');
+      const payload: any = { api_key_id: selectedKey, provider: selectedProvider, model: selectedModel, type: mode, prompt: finalPromptText, params: { ...params, client_id: id, ...(ratioSize ? { size: ratioSize } : {}) } };
       if (incomingImage) payload.image_url = incomingImage;
 
       if (isAgentMode) {
-        const activeSystemPrompt = externalSystemPrompt || SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES].prompt;
+        const activeSystemPrompt = externalSystemPrompt || data._systemPromptOverride || getSelectedRolePrompt();
         payload.messages = [{ role: "system", content: activeSystemPrompt }];
         if (mode === 'vision' && incomingImage) payload.messages.push({ role: "user", content: [{ type: 'text', text: finalPromptText || "描述这张图片" }, { type: 'image_url', image_url: { url: incomingImage } }] });
         else payload.messages.push({ role: "user", content: finalPromptText || "开始执行" });
       }
 
-      updateNodeData(id, { _finalSourcePrompt: finalPromptText, _finalSystemPrompt: externalSystemPrompt || SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES].prompt });
+      updateNodeData(id, { _finalSourcePrompt: finalPromptText, _finalSystemPrompt: externalSystemPrompt || data._systemPromptOverride || getSelectedRolePrompt() });
       await apiClient.request({ url: '/generate', method: 'POST', data: payload });
     } catch (error: any) {
       message.error(`生成报错: ${error.response?.data?.detail || '未知错误'}`);
@@ -194,8 +405,27 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     setSavingAsset(true);
     try {
       const contentStr = String(data.result.content);
+      const selectedProviderName = keys.find(k => k.id === selectedKey)?.provider || data.provider || '';
+      const ratioSize = aspectRatio === 'custom' ? `${customWidth}*${customHeight}` : (aspectRatio ? ASPECT_RATIOS.find(r => r.value === aspectRatio)?.size : '');
+      const cameraSuffix = buildCameraPromptSuffix(cameraParams);
+
+      // 血缘追踪：完整记录生成上下文
       let assetType = 'prompt';
-      let assetData: Record<string, any> = { content: contentStr, source_model: selectedModel, source_prompt: data._finalSourcePrompt, source_system: data._finalSystemPrompt, source_params: params };
+      let assetData: Record<string, any> = {
+        content: contentStr,
+        // 溯源核心
+        source_provider: selectedProviderName,
+        source_model: selectedModel,
+        source_mode: mode,
+        source_prompt: data._finalSourcePrompt,
+        source_system: data._finalSystemPrompt,
+        source_params: params,
+        // 画面参数
+        source_aspect_ratio: aspectRatio || null,
+        source_size: ratioSize || null,
+        source_camera_params: Object.keys(cameraParams).length > 0 ? cameraParams : null,
+        source_camera_suffix: cameraSuffix || null,
+      };
       let thumbnail: string | undefined = undefined;
 
       if (mode.includes('image') || contentStr.startsWith('http') || contentStr.startsWith('data:image')) {
@@ -205,10 +435,11 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
       }
 
       const briefPrompt = prompt.length > 0 ? prompt.substring(0, 10) : selectedModel;
-      const assetName = `${assetType === 'image' ? '🖼️' : '📝'} ${briefPrompt}...`;
+      const assetName = `${assetType === 'image' ? '🖼️' : assetType === 'video' ? '🎬' : '📝'} ${briefPrompt}...`;
 
       await apiClient.post('/assets/', { name: assetName, type: assetType, data: assetData, tags: ['AI_Generated', mode, selectedModel], thumbnail: thumbnail, project_id: projectId ? Number(projectId) : null });
       message.success('已携带【溯源信息】固化到资产库！');
+      if (projectId) fetchAssets(Number(projectId));
     } catch (error: any) { message.error(`入库失败`); } finally { setSavingAsset(false); }
   };
 
@@ -243,111 +474,256 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
     return handles;
   };
 
-  return (
-    <BaseNode {...props}>
-      {renderDynamicHandles()}
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+  const currentModality = MODALITIES.find(m => m.id === mode);
+  const currentModelDisplay = allModels.find(m => m.model_name === selectedModel)?.display_name || selectedModel || '未配置';
 
-        {/* 🌟 移除大区块容器的 nodrag，只在可滚动区域加 nowheel 防冲突 */}
-        <div className="nowheel" style={{ flex: '1 1 50%', display: 'flex', flexDirection: 'column', overflowY: 'auto', paddingRight: 4, gap: 10, minHeight: 120 }}>
-          <div style={{ flexShrink: 0 }}>
-            {isAgentMode && (
-              <div style={{ marginBottom: 12, background: isRoleCollapsed ? '#f8fafc' : '#fff7e6', borderRadius: 8, border: isRoleCollapsed ? '1px solid #cbd5e1' : '1px solid #ffd591' }}>
-                <div onClick={() => setIsRoleCollapsed(!isRoleCollapsed)} style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}>
-                  <Text strong style={{ color: isRoleCollapsed ? '#475569' : '#d46b08' }}>[ SYS.ROLE ]: {SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.label.split(' ')}</Text>
-                  {isRoleCollapsed ? <DownOutlined style={{ fontSize: 10 }}/> : <UpOutlined style={{ fontSize: 10, color: '#fa8c16' }}/>}
-                </div>
-                {!isRoleCollapsed && (
-                  <div style={{ padding: '0 12px 12px 12px' }}>
-                      <Select className="nodrag" size="middle" style={{ width: '100%', marginBottom: 6 }} value={selectedRole} onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }} options={Object.entries(SYSTEM_ROLES).map(([k, v]) => ({ label: v.label, value: k }))} />
-                      <div style={{ background: '#fff', padding: 8, borderRadius: 6, border: '1px dashed #ffd591' }}><Text style={{ fontSize: 13, color: '#475569' }}>{SYSTEM_ROLES[selectedRole as keyof typeof SYSTEM_ROLES]?.prompt}</Text></div>
-                  </div>
-                )}
+  const isImageVideoMode = ['text_to_image', 'image_to_image', 'text_to_video', 'image_to_video'].includes(mode);
+  const isVideoMode = ['text_to_video', 'image_to_video'].includes(mode);
+  const cameraSuffix = buildCameraPromptSuffix(cameraParams);
+
+  // 裂变可视化保险：展示期望条数/解析条数
+  const expectedFissionCount = Number.isFinite(Number(data._fissionExpectedCount)) ? Number(data._fissionExpectedCount) : null;
+  const parsedFissionCount = (data.result?._fission && Array.isArray(data.result?.items)) ? data.result.items.length : 0;
+  const isFissionCountHealthy = expectedFissionCount === null || parsedFissionCount === expectedFissionCount;
+
+  // 当前比例显示
+
+
+  const configPanel = configOpen && panelPos ? ReactDOM.createPortal(
+    <div
+      data-config-panel
+      className="nodrag nowheel"
+      style={{
+        position: 'fixed',
+        top: panelPos.top,
+        left: panelPos.left,
+        width: 560,
+        background: '#fff',
+        borderRadius: 12,
+        boxShadow: '0 12px 40px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.06)',
+        border: '1px solid #e2e8f0',
+        zIndex: 9999,
+        padding: '12px 14px',
+      }}
+    >
+      {/* Row 1: 模式选择 + 关闭按钮 */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ flex: 1, display: 'flex', gap: 2, background: '#f1f5f9', borderRadius: 8, padding: 2 }}>
+          {MODALITIES.map(m => {
+            const isActive = mode === m.id;
+            return (
+              <div key={m.id} onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }}
+                style={{ flex: 1, textAlign: 'center', padding: '5px 0', cursor: 'pointer', borderRadius: 6, fontSize: 11, fontWeight: isActive ? 700 : 500, color: isActive ? '#fff' : '#64748b', background: isActive ? '#0ea5e9' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, transition: 'all 0.15s' }}>
+                {m.icon} {m.label}
               </div>
-            )}
+            );
+          })}
+        </div>
+        <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setConfigOpen(false)} style={{ color: '#94a3b8', flexShrink: 0 }} />
+      </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, background: '#f1f5f9', borderRadius: 8, padding: 6, border: '1px solid #cbd5e1' }}>
-                {MODALITIES.map((m) => {
-                  const isActive = mode === m.id;
-                  return (
-                    <div key={m.id} onClick={() => { setMode(m.id); setSelectedModel(''); setParams({}); }} style={{ textAlign: 'center', padding: '6px 0', cursor: 'pointer', borderRadius: 6, fontSize: 12, fontWeight: isActive ? 800 : 600, color: isActive ? '#fff' : '#64748b', background: isActive ? '#0ea5e9' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                      {m.icon} <span>{m.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+      {/* Row 2: 提示词大区域 */}
+      <Input.TextArea
+        placeholder="输入指令或连线输入素材..."
+        autoSize={{ minRows: 4, maxRows: 10 }}
+        value={prompt}
+        onChange={e => setPrompt(e.target.value)}
+        style={{ fontSize: 13, fontFamily: 'monospace', borderRadius: 8, marginBottom: 10 }}
+      />
 
-          <Select className="nodrag" placeholder="1. 选择云端算力" size="middle" style={{ width: '100%', flexShrink: 0 }} value={selectedKey || undefined} onChange={v => { setSelectedKey(v); setSelectedModel(''); }} options={keys.map(k => ({ label: `${k.provider} - ${k.description}`, value: k.id }))} />
+      {/* Row 3: 模型厂商 + 模型 */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'flex-end' }}>
+        <div style={{ width: 180 }}>
+          <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600, display: 'block', marginBottom: 3 }}>模型厂商</Text>
+          <Select
+            size="small" placeholder="选择 Key" style={{ width: '100%' }}
+            value={selectedKey || undefined}
+            onChange={v => { setSelectedKey(v); setSelectedModel(''); }}
+            options={keys.map(k => ({ label: k.provider, value: k.id }))}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600, display: 'block', marginBottom: 3 }}>模型</Text>
           {loading ? <Spin size="small" /> : (
-            <>
-              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                <Select className="nodrag" placeholder="2. 选择 AI 模型" size="middle" style={{ flex: 1 }} value={selectedModel || undefined} onChange={v => {
-                  setSelectedModel(v); const m = allModels.find(i => i.model_name === v);
-                  if(m?.context_ui_params && m.context_ui_params[mode]) { const defs:any={}; m.context_ui_params[mode].forEach((p:any)=>defs[p.name]=p.default); setParams(defs); }
-                }} disabled={!selectedKey} options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))} />
-                <Tooltip title={showOnlyFavorites ? "显示常用" : "显示全量"}><Button type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} style={{ height: 32 }} onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} /></Tooltip>
-              </div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <Select
+                size="small" placeholder="选择模型" style={{ flex: 1, minWidth: 0 }}
+                value={selectedModel || undefined} disabled={!selectedKey}
+                onChange={v => {
+                  setSelectedModel(v);
+                  const m = allModels.find(i => i.model_name === v);
+                  if (m?.context_ui_params?.[mode]) { const defs: any = {}; m.context_ui_params[mode].forEach((p: any) => defs[p.name] = p.default); setParams(defs); }
+                }}
+                options={allModels.filter(m => showOnlyFavorites ? m.is_favorite : true).map(m => ({ label: (m.is_favorite && !showOnlyFavorites) ? `⭐ ${m.display_name}` : m.display_name, value: m.model_name }))}
+              />
+              <Tooltip title={showOnlyFavorites ? '显示全量' : '只看收藏'}>
+                <Button size="small" type={showOnlyFavorites ? 'primary' : 'default'} icon={<StarFilled />} onClick={() => setShowOnlyFavorites(!showOnlyFavorites)} />
+              </Tooltip>
+            </div>
+          )}
+        </div>
+      </div>
 
-              {allModels.find(i => i.model_name === selectedModel)?.context_ui_params?.[mode] && (
-                <div style={{ background: '#f8fafc', padding: '12px 12px 0 12px', borderRadius: 8, border: '1px solid #cbd5e1', flexShrink: 0 }}>
-                  {renderParams()}
-                </div>
+      {/* Row 4: 底部工具行 */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* 提示词大师（仅 chat/vision） */}
+        {isAgentMode && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Select
+              size="small" style={{ width: 150 }} value={selectedRole}
+              onChange={v => { setSelectedRole(v); updateNodeData(id, { selectedRole: v }); }}
+              options={roleOptions}
+            />
+            {PRESET_ROLES.map(preset => (
+              <Tag key={preset.name} color="orange" style={{ cursor: 'pointer', fontSize: 10, margin: 0, lineHeight: '20px' }} onClick={() => handleCreatePresetRole(preset)}>
+                {preset.label}
+              </Tag>
+            ))}
+          </div>
+        )}
+
+        {/* 动态参数 */}
+        {allModels.find(i => i.model_name === selectedModel)?.context_ui_params?.[mode] && (
+          <div style={{ background: '#f8fafc', padding: '4px 8px', borderRadius: 6, border: '1px solid #e2e8f0', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            {renderParams()}
+          </div>
+        )}
+
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }} />
+
+        {/* 比例 + 摄像机 触发按钮（仅图像/视频模式） */}
+        {isImageVideoMode && (
+          <AspectRatioTrigger value={aspectRatioValue} onClick={() => setActivePanel(activePanel === 'ratio' ? null : 'ratio')} />
+        )}
+        {isImageVideoMode && (
+          <CameraTrigger value={cameraParams} onClick={() => setActivePanel(activePanel === 'camera' ? null : 'camera')} />
+        )}
+        {isVideoMode && (
+          <CameraMovementTrigger onClick={() => setActivePanel(activePanel === 'movement' ? null : 'movement')} />
+        )}
+      </div>
+
+      {/* 展开面板（互斥，只开一个） */}
+      {isImageVideoMode && activePanel === 'ratio' && (
+        <AspectRatioPanel value={aspectRatioValue} onChange={setAspectRatioValue} onClose={() => setActivePanel(null)} />
+      )}
+      {isImageVideoMode && activePanel === 'camera' && (
+        <CameraPanel value={cameraParams} onChange={setCameraParams} onClose={() => setActivePanel(null)}
+          customOptions={customCameraOptions}
+          onCustomOptionsChange={(v) => { setCustomCameraOptions(v); updateNodeData(id, { customCameraOptions: v }); }}
+        />
+      )}
+      {isVideoMode && activePanel === 'movement' && (
+        <CameraMovementPanel
+          onInsert={(text) => setPrompt(prev => prev ? `${prev}, ${text}` : text)}
+          onClose={() => setActivePanel(null)}
+          customPresets={customMovements}
+          onAddCustom={(preset) => { const updated = [...customMovements, preset]; setCustomMovements(updated); updateNodeData(id, { customMovements: updated }); }}
+          onRemoveCustom={(value) => { const updated = customMovements.filter(m => m.value !== value); setCustomMovements(updated); updateNodeData(id, { customMovements: updated }); }}
+        />
+      )}
+
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <BaseNode {...props} onOpenConfig={() => { setConfigOpen(v => !v); }}>
+      {renderDynamicHandles()}
+
+      {/* ── 紧凑视图 ── */}
+      <div ref={nodeRef} style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+        {/* 模式 badge + 模型名 + 裂变开关 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <Tag color="#0ea5e9" style={{ margin: 0, fontWeight: 700, fontSize: 11, letterSpacing: 1, fontFamily: 'monospace' }}>
+            {currentModality?.label || mode.toUpperCase()}
+          </Tag>
+          <Text style={{ fontSize: 12, color: selectedModel ? '#1e293b' : '#94a3b8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={currentModelDisplay}>
+            {currentModelDisplay}
+          </Text>
+          {(mode === 'chat' || mode === 'vision') && (
+            <>
+              <Tooltip title="裂变输出：LLM 返回 JSON 数组时自动裂变下游节点并发执行">
+                <Tag
+                  className="nodrag"
+                  color={data._fissionEnabled ? '#f59e0b' : undefined}
+                  style={{ margin: 0, cursor: 'pointer', fontSize: 11, userSelect: 'none' }}
+                  onClick={() => updateNodeData(id, { _fissionEnabled: !data._fissionEnabled })}
+                >
+                  {data._fissionEnabled ? '🔀 裂变' : '裂变'}
+                </Tag>
+              </Tooltip>
+
+              {data._fissionEnabled && (
+                <Tooltip title={expectedFissionCount !== null ? `裂变计数校验：期望 ${expectedFissionCount} 条，当前解析 ${parsedFissionCount} 条` : '裂变计数校验：未设置期望条数'}>
+                  <Tag
+                    style={{ margin: 0, fontSize: 11, userSelect: 'none' }}
+                    color={isFissionCountHealthy ? 'green' : 'red'}
+                  >
+                    {expectedFissionCount !== null ? `${parsedFissionCount}/${expectedFissionCount}` : `${parsedFissionCount}/?`}
+                  </Tag>
+                </Tooltip>
               )}
-              <TextArea className="nodrag nowheel" placeholder="输入指令或连线输入素材..." autoSize={{ minRows: 4, maxRows: 8 }} value={prompt} onChange={e => setPrompt(e.target.value)} style={{ fontSize: 13, fontFamily: 'monospace', background: '#fff', borderRadius: 8, flexShrink: 0 }} />
             </>
           )}
         </div>
 
-{/* 🌟 Phase 10：AI大脑拦截按钮 */}
+        {/* Prompt 输入框（小版） */}
+        <TextArea
+          className="nodrag nowheel"
+          placeholder="输入指令或连线输入素材..."
+          autoSize={{ minRows: 2, maxRows: 4 }}
+          value={prompt}
+          onChange={e => setPrompt(e.target.value)}
+          style={{ fontSize: 13, fontFamily: 'monospace', background: '#fff', borderRadius: 8, flexShrink: 0 }}
+        />
+
+        {/* 运行 / 中止按钮 */}
         <Button
-          type="primary"
-          danger={generating}
-          block
+          type="primary" danger={generating} block
           icon={generating ? <StopOutlined /> : <PlayCircleOutlined />}
           onClick={generating ? handleInterrupt : handleRun}
-          style={{ flexShrink: 0, margin: '12px 0', height: 40, fontSize: 15, fontWeight: 'bold' }}
+          disabled={isMuted}
+          style={{ flexShrink: 0, height: 36, fontSize: 13, fontWeight: 'bold' }}
         >
-          {generating ? '强行中止 (切断网络连接)' : '单点运行'}
+          {isMuted ? '已静音' : generating ? '强行中止' : '单点运行'}
         </Button>
 
-        {/* 🌟 同样移除下半区的 nodrag */}
-        <div style={{ flex: showPreview ? '1 1 50%' : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 140 : 'auto', overflow: 'hidden' }}>
+        {/* OUTPUT_PREVIEW */}
+        <div style={{ flex: showPreview ? 1 : '0 0 auto', display: 'flex', flexDirection: 'column', background: '#f8fafc', padding: 10, borderRadius: 8, border: '1px dashed #94a3b8', minHeight: showPreview ? 120 : 'auto', overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: 700, fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 700, fontFamily: 'monospace' }}>&gt; OUTPUT_PREVIEW</Text>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               {data.result?.content && (
                 <Tooltip title="携带血统溯源固化到资产库">
-                  <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 18, color: '#0ea5e9', padding: 0, height: 'auto' }} />
+                  <Button type="text" size="small" icon={<SaveOutlined />} loading={savingAsset} onClick={handleSaveToAsset} style={{ fontSize: 16, color: '#0ea5e9', padding: 0, height: 'auto' }} />
                 </Tooltip>
               )}
-              <Switch className="nodrag" size="small" checked={showPreview} onChange={(v) => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
+              <Switch className="nodrag" size="small" checked={showPreview} onChange={v => { setShowPreview(v); updateNodeData(id, { showPreview: v }); }} />
             </div>
           </div>
 
           {showPreview && (
-            <div style={{ flex: 1, position: 'relative', background: '#0f172a', borderRadius: 8, overflow: 'hidden', marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ flex: 1, position: 'relative', background: '#f1f5f9', borderRadius: 8, overflow: 'hidden', marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 80 }}>
               {mediaDims && !generating && data.result?.content && (
-                <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(15,23,42,0.75)', backdropFilter: 'blur(4px)', color: '#f8fafc', fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 4, zIndex: 10, fontFamily: 'monospace', border: '1px solid rgba(255,255,255,0.1)' }}>
                   {mediaDims}
                 </div>
               )}
               {generating ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20 }}>
                   <Spin size="default" style={{ marginBottom: 12 }} />
                   <Text type="secondary" style={{ fontSize: 13, fontWeight: 'bold', color: '#10b981' }}>{progressMsg}</Text>
                 </div>
               ) : data.result?.content ? (
                 (typeof data.result.content === 'string' && (data.result.content.startsWith('http') || data.result.content.startsWith('data:'))) ? (
                   data.result.type === 'video' || data.result.content.match(/\.(mp4|webm|mov|gif)(\?|$)/i) ? (
-                    <video src={data.result.content} controls autoPlay loop muted style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} onLoadedMetadata={(e) => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
+                    <video src={data.result.content} controls autoPlay loop muted style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} onLoadedMetadata={e => setMediaDims(`${(e.target as HTMLVideoElement).videoWidth} × ${(e.target as HTMLVideoElement).videoHeight}`)} />
                   ) : (
-                    <img src={data.result.content} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'high-quality' }} alt="Preview" onLoad={(e) => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
+                    <img src={data.result.content} style={{ maxWidth: '100%', maxHeight: '100%', borderRadius: 8 }} alt="Preview" onLoad={e => setMediaDims(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)} />
                   )
                 ) : (
-                  // 🌟 文字显示区域保留 nodrag nowheel
                   <div className="nodrag nowheel" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', padding: 12, overflowY: 'auto', fontSize: 13, color: '#f8fafc', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     {data.result.content}
                   </div>
@@ -359,7 +735,12 @@ const GenerateNode: React.FC<NodeProps> = (props) => {
           )}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} id="out" style={{ background: '#fa8c16', width: 12, height: 12 }} />
+
+      <Tooltip title={`${getTypeLabel(getHandleDataType('generate', 'out', data, 'source'))}输出`} placement="right">
+        <Handle type="source" position={Position.Right} id="out" style={{ background: getTypeColor(getHandleDataType('generate', 'out', data, 'source')), width: 12, height: 12 }} />
+      </Tooltip>
+
+      {configPanel}
     </BaseNode>
   );
 };

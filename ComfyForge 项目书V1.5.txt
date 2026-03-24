@@ -1,0 +1,270 @@
+ComfyForge 项目书
+版本：v1.5
+最后更新：2026年3月1日
+作者：与你一起讨论的伙伴
+
+一、项目概述
+1.1 背景
+ComfyUI 作为强大的 AI 工作流引擎，已被广泛用于图像、视频生成。然而，随着创作深度增加，用户面临两大痛点：
+
+资产无法复用：精心调试的提示词、角色形象、工作流无法系统化管理，每次创作都要重新“造轮子”。
+
+执行后端僵化：所有工作流必须跑在本地 GPU 上，受限于硬件；无法灵活选择云端 API 或云 ComfyUI 实例来实现并行、降本。
+
+现有的社区解决方案（如 ComfyUI_PromptManager、VNCCS）多采用“侵入式”方式——修改 ComfyUI 内部节点，且资产类型局限。我们需要的是一种非侵入式、通用资产化、灵活调度的智能创作助理。
+
+1.2 项目目标
+ComfyForge 旨在打造一个 ComfyUI 的智能驾驶舱，实现：
+
+资产即服务：将提示词、角色形象、工作流模板、生成物等统一为可复用的资产，支持版本、标签、关联追溯。
+
+执行即调度：提供三种执行模式（本地 ComfyUI 工作流、云端 ComfyUI、直接 API 管道），用户可按需选择，系统自动路由。
+
+成本与效率最优：混合调度本地免费资源与云端弹性资源，让创作更高效、更经济。
+
+1.3 核心理念
+非侵入式：不修改 ComfyUI 本身，通过 API 控制，与官方生态保持兼容。
+
+资产驱动：一切可沉淀的灵感都是资产，让创作过程可积累、可追溯。
+
+灵活扩展：适配器模式，未来可轻松接入新的 API 或云平台。
+
+二、当前项目状态（截至2026.3.1）
+✅ 已完成功能
+Phase 1：直接 API 管道（场景三）
+实现了 DirectAPIPipelineExecutor，支持多步骤管道定义，步骤间变量传递。
+
+集成了 core/adapters，成功调用 Qwen（文本生成 + 图像生成）API。
+
+前端 Gradio 界面可输入管道 JSON，运行并显示生成的图像。
+
+后端同步/异步任务支持，错误处理和日志。
+
+Phase 2：资产管理基础
+设计了通用 Asset 模型（SQLAlchemy），支持多类型资产（通过 type 字段和 JSON data）。
+
+实现了资产的 CRUD API 端点（/api/assets）。
+
+增加了项目（Project）概念，资产可归属于项目（project_id 外键），并支持按项目过滤。
+
+实现了版本控制：更新资产时创建新版本（parent_id 指向原资产）。
+
+实现了血缘追踪：生成物资产（如图像）自动记录 source_asset_ids，可追溯输入资产。
+
+在管道中支持资产引用语法 {asset:id}，并从数据库加载对应资产的内容。
+
+图像生成管道输出自动保存为图像资产（type=image），并记录血缘。
+
+实现了专门的 PATCH 端点 /api/assets/{id}/project，用于分配/剥离项目时不触发版本控制。
+
+资产类型扩展
+定义了 Pydantic 模型（schemas.py）对 prompt、image、character 资产的 data 字段进行结构化验证。
+
+前端模块化表单设计：为 prompt 和 character 资产类型创建独立表单模块（frontend/forms/），动态切换。
+
+支持角色资产通过引用其他资产ID构建（核心提示词资产ID、图片资产ID列表、LoRA资产ID、变体映射）。
+
+视频循环编排模拟器
+创建了 VideoLoopExecutor（模拟版），支持分段视频生成、模拟调用、拼接。
+
+前端新增“视频工坊”标签页，允许用户上传视频、设置参数、一键生成模拟视频。
+
+实现了视频资产保存函数 save_video_as_asset，支持自动记录血缘。
+
+Key 管理模块（核心新增）
+新增 APIKey 数据库模型，支持存储多个提供商密钥、额度、优先级、标签等。
+
+实现了完整的 Key 管理 API 端点（/api/keys）：创建、列表、查询、更新、删除、测试。
+
+前端新增“Key 管理”标签页，可添加、测试、管理多个 API Key。
+
+实现了 Key 测试功能（key_tester.py），支持 Qwen、Gemini、Grok、Hailuo 等平台。
+
+实现了定时 Key 监控（key_monitor.py），自动检查 Key 有效性并更新状态。
+
+修改了 AdapterFactory，支持从数据库自动选择可用 Key 注入适配器。
+
+🚧 进行中/待完善功能
+智能路由引擎：根据成本、速度、剩余额度动态选择最佳 Key。
+
+工作流模板资产（workflow）：将 ComfyUI 工作流保存为资产，支持参数标记和复用。
+
+本地 ComfyUI 集成（场景一）：实现本地 ComfyUI 工作流调用。
+
+云端 ComfyUI 集成（场景二）：对接 RunningHub 等云平台。
+
+资产引用增强：支持点号路径访问（如 {asset:id.data.field}）和递归解析。
+
+前端增强：资产预览、编辑、版本历史查看、血缘关系图。
+
+三、核心功能与使用场景
+3.1 三大使用场景（当前完成场景三）
+场景一：调用本地 ComfyUI 工作流（未开始）
+
+场景二：调用云端 ComfyUI（未开始）
+
+场景三：直接 API 管道（已完成）
+
+3.2 资产管理功能（当前支持）
+提示词资产 (prompt)
+
+图像资产 (image)
+
+角色资产 (character)
+
+项目 (project)
+
+API Key 资产（特殊管理，非资产表）
+
+3.3 Key 管理功能（核心亮点）
+多提供商 Key 统一管理
+
+自动健康检查与故障转移
+
+额度监控与预警
+
+智能适配器注入
+
+四、技术架构
+4.1 当前实现架构
+text
+┌─────────────────────────────────────────────────────────────┐
+│                      前端 (Gradio)                           │
+│  - 图像生成管道                                              │
+│  - 资产管理（项目、资产列表、动态表单）                      │
+│  - 视频工坊（模拟视频生成）                                  │
+│  - Key管理（添加、测试、查看）                               │
+└───────────────────────────────┬─────────────────────────────┘
+                                │ REST API
+                                ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      后端 (FastAPI)                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │资产管理模块  │  │项目管理模块  │  │  Key管理模块       │  │
+│  │CRUD、版本    │  │CRUD          │  │  测试、监控        │  │
+│  │标签、血缘    │  └─────────────┘  └───────────┬─────────┘  │
+│  └─────────────┘              ▲                  │              │
+│                        ┌──────┴──────┐           ▼              │
+│                        │  数据库      │    ┌───────────────────┐│
+│                        │ (SQLite)     │    │ 执行器            ││
+│                        │ 资产、项目    │    │ DirectAPI        ││
+│                        │ API Key      │    │ VideoLoop (模拟) ││
+│                        └──────────────┘    └───────────────────┘│
+└──────────────────────────────────────────────────┬──────────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│  本地ComfyUI   │  │ 云端ComfyUI   │  │  第三方API    │
+│  (未实现)      │  │ (未实现)       │  │  (已集成Qwen) │
+└───────────────┘  └───────────────┘  └───────────────┘
+4.2 核心模块说明
+core/adapters：各 API 适配器，已集成 Qwen、Gemini、Grok 等，支持 Key 注入。
+
+core/key_tester.py：Key 测试函数，支持多种平台。
+
+core/key_monitor.py：定时 Key 健康检查任务。
+
+backend/api/keys.py：Key 管理 API。
+
+backend/models/api_key.py：Key 数据库模型。
+
+frontend/tabs/key_manager.py：Key 管理前端界面。
+
+backend/core/executors/：执行器，包括 direct_api.py 和 video_loop.py（模拟）。
+
+五、项目目录结构（当前实际）
+text
+ComfyForge/
+├── .venv/
+├── backend/
+│   ├── api/
+│   │   ├── assets.py
+│   │   ├── projects.py
+│   │   └── keys.py
+│   ├── core/
+│   │   ├── executors/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── direct_api.py
+│   │   │   └── video_loop.py
+│   │   ├── asset_utils.py
+│   │   ├── key_tester.py
+│   │   ├── key_monitor.py
+│   │   └── task_scheduler.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── asset.py
+│   │   ├── project.py
+│   │   ├── api_key.py
+│   │   └── schemas.py
+│   ├── app.py
+│   ├── config.py
+│   └── db.py
+├── core/
+│   ├── adapters/
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── factory.py
+│   │   ├── qwen.py
+│   │   ├── gemini.py
+│   │   ├── grok.py
+│   │   ├── doubao.py
+│   │   └── ...
+│   ├── syncers/
+│   └── utils.py
+├── data/
+│   ├── assets/
+│   │   └── images/
+│   ├── temp/
+│   └── comfyforge.db
+├── frontend/
+│   ├── forms/
+│   │   ├── __init__.py
+│   │   ├── prompt_form.py
+│   │   └── character_form.py
+│   ├── tabs/
+│   │   ├── __init__.py
+│   │   ├── key_manager.py
+│   │   └── video_workshop.py
+│   └── gradio_app.py
+├── .env.example
+├── .gitignore
+├── README.md
+├── requirements.txt
+└── run_backend.py
+六、实施路线图（更新）
+阶段	目标	核心任务	状态
+Phase 0	环境搭建	初始化项目，配置 FastAPI + SQLite，导入 core	✅ 完成
+Phase 1	实现场景三（直接 API 管道）	开发 DirectAPIPipelineExecutor，Gradio 测试界面，验证端到端流程	✅ 完成
+Phase 2	资产管理基础	设计资产模型，CRUD API，项目关联，版本控制，血缘追踪	✅ 完成
+Phase 2.1	资产类型扩展	定义 prompt、image、character 的 Pydantic 模型，模块化前端表单	✅ 完成
+Phase 2.2	视频循环编排模拟器	开发 VideoLoopExecutor，前端视频工坊，模拟视频生成	✅ 完成
+Phase 2.3	Key 管理模块	API Key 模型、CRUD、测试、监控、适配器集成	✅ 完成
+Phase 2.4	智能路由引擎	根据成本、速度、剩余额度动态选择最佳 Key	🚧 进行中
+Phase 3	工作流模板管理（场景一）	实现模板保存、参数解析、与本地 ComfyUI 通信	⏳ 未开始
+Phase 4	云端 ComfyUI 集成（场景二）	对接 1-2 个云平台	⏳ 未开始
+Phase 5	统一调度与资产联动	任务执行自动记录资产使用，前端展示血缘关系	⏳ 未开始
+Phase 6	前端升级	用 React + React Flow 重构前端	⏳ 未开始
+七、持久化与协作机制
+项目书持久化：本文档保存在 GitHub 仓库根目录（PROJECT_PLAN.md），记录所有重要决策和架构设计。
+
+版本控制：使用 Git 管理代码和文档，每次重大更新提交并打标签。
+
+后续交流方式：
+
+创建新的对话时附上本项目书链接和当前进度摘要。
+
+可在 GitHub Issues 中记录问题或继续在对话中交流。
+
+八、下一步工作重点
+根据当前进度，建议优先推进：
+
+智能路由引擎：在现有 Key 管理基础上，实现根据成本、速度、剩余额度动态选择最优 Key 的逻辑，进一步提升用户体验和成本优化。
+
+工作流模板资产：开始 Phase 3，将 ComfyUI 工作流保存为资产，支持参数标记和复用。
+
+本地 ComfyUI 集成：实现本地 ComfyUI 工作流调用，让视频循环编排器真正跑起来。
+
+云端 ComfyUI 集成：对接 RunningHub 等云平台，提供更多后端选择。

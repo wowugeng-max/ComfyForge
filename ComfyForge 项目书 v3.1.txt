@@ -1,0 +1,377 @@
+ComfyForge 项目书 v3.1
+版本：v3.1
+最后更新：2026年3月3日
+作者：与你一起讨论的伙伴
+
+一、项目概述
+1.1 背景
+ComfyUI 作为强大的 AI 工作流引擎，已被广泛用于图像、视频生成。然而，用户面临两大痛点：
+
+资产无法复用，每次创作都要重新“造轮子”。
+
+执行后端僵化，只能依赖本地 GPU，无法灵活选择云端 API 或云 ComfyUI 实例。
+
+ComfyForge 旨在打造一个 ComfyUI 的智能驾驶舱，实现资产化管理和灵活调度，并引入智能学习系统，让推荐规则越用越聪明。
+
+1.2 项目目标
+资产即服务：统一管理提示词、角色、工作流模板、生成物等，支持版本、标签、血缘追溯。
+
+执行即调度：支持本地 ComfyUI、云端 ComfyUI、直接 API 三种执行模式，自动路由最优后端。
+
+智能推荐：根据用户历史配置，自动推荐常用参数，并可配置规则和阈值。
+
+双模式创作：同时提供“引导式执行”（新手友好）和“无限画布”（专家自由）两种创作方式，覆盖全层次用户。
+
+1.3 核心理念
+非侵入式：不修改 ComfyUI 本身，通过 API 控制。
+
+资产驱动：一切可沉淀的灵感都是资产，让创作过程可积累。
+
+灵活扩展：适配器模式，易接入新 API 或云平台。
+
+学习进化：系统通过用户行为不断优化推荐，越用越智能。
+
+二、当前项目状态（截至 2026.3.3）
+✅ 已完成功能
+基础框架
+
+后端：FastAPI + SQLite，支持异步任务、数据库初始化。
+
+前端：React + TypeScript + Vite，Ant Design 组件库，React Router 路由，Zustand 状态管理。
+
+资产管理
+
+资产模型（Asset）支持 prompt、image、character、workflow、video 等类型。
+
+资产 CRUD API，支持按项目过滤、版本控制、血缘追踪。
+
+前端资产列表、详情、创建/编辑表单（动态类型切换）。
+
+Key 管理
+
+API Key 模型（APIKey），支持多提供商、额度、优先级、标签。
+
+Key 管理 API（增删改查、测试、批量测试）。
+
+前端 Key 管理页面，支持添加、编辑、测试、删除。
+
+智能路由引擎（初步实现）。
+
+执行器
+
+直接 API 管道执行器（DirectAPIPipelineExecutor），支持多步骤、变量替换、资产引用。
+
+本地 ComfyUI 执行器（LocalComfyExecutor），支持工作流提交、轮询、文件下载。
+
+视频循环执行器（RealVideoLoopExecutor），支持多段视频生成（手动指定首帧、尾帧、提示词资产）。
+
+云端视频循环执行器（CloudVideoLoopExecutor，待完善）。
+
+工作流配置器（核心亮点）
+
+上传 JSON 工作流文件，React Flow 可视化渲染节点图。
+
+节点点击打开参数配置面板，支持自定义参数名称。
+
+批量配置面板：上传后自动弹出，汇总所有推荐字段，支持全选、自定义、批量保存。
+
+节点 ID 快速定位。
+
+已配置参数列表展示，支持定位和删除。
+
+只读模式与编辑模式区分。
+
+“刷新建议”按钮，可手动重新触发推荐面板。
+
+智能学习系统
+
+统计模型 NodeParameterStat，记录节点类型下各字段被配置的次数。
+
+推荐接口 /suggestions/recommend 返回热门字段。
+
+上报接口 /suggestions/report 收集用户配置。
+
+前端 workflowSuggestions.ts 整合本地规则和统计推荐，实现冷启动和学习进化。
+
+规则管理系统
+
+规则模型 RecommendationRule，存储手动规则（节点类型、字段、默认参数名、优先级、阈值等）。
+
+规则 CRUD API。
+
+合并接口 /recommendation-rules/combined 返回手动规则和学习规则。
+
+前端规则管理页面，展示手动和学习规则，手动规则可增删改查，学习规则可一键转为手动规则。
+
+规则支持优先级排序、阈值控制（仅当统计次数≥阈值时自动勾选）。
+
+无限画布（Phase 7.1 完成）
+
+基于 React Flow 的节点编辑器基础框架。
+
+节点类型注册机制（nodeRegistry.ts），支持动态添加自定义节点。
+
+画布状态管理（canvasStore.ts），实现节点/边的添加、删除、移动、连接。
+
+撤销/重做功能（Zustand + immer）。
+
+节点库侧边栏（可拖拽放置节点）。
+
+基础节点组件 BaseNode，统一样式和端口。
+
+示例节点 LoadAssetNode（基础版）和 GenerateNode（基础版）已注册。
+
+🚧 进行中/待完善功能
+模块	状态	说明
+无限画布 Phase 7.2	🚧 进行中	完善资产库侧边栏 AssetLibrary，支持从资产库拖拽资产到 Load Asset 节点，节点显示预览并动态更新输出端口。
+无限画布 Phase 7.3	⏳ 未开始	实现 Generate 节点完整功能：集成云 API 生成，支持图像/视频/提示词，动态参数面板，结果预览。
+无限画布 Phase 7.4	⏳ 未开始	实现 Preview 节点，通用展示结果（图像、视频、文本），支持多组自动延伸。
+无限画布 Phase 7.5	⏳ 未开始	实现 Loop 节点，支持循环执行子节点。
+无限画布 Phase 7.6	⏳ 未开始	实现 ComfyUI Engine 节点，集成工作流模板。
+仪表盘	⏳ 未开始	展示资产统计、任务状态、推荐使用情况。
+引导式执行	⏳ 未开始	新手友好的模式化创作界面。
+云端 ComfyUI 集成	⏳ 未开始	CloudVideoLoopExecutor 需对接真实 API（如 RunningHub）。
+血缘关系图	⏳ 未开始	基于 source_asset_ids 用 React Flow 可视化资产关系。
+前端测试与优化	🚧 进行中	处理 antd 弃用警告，优化热重载。
+性能监控	🚧 进行中	确保大工作流下画布流畅。
+用户偏好（项目级）	⏳ 未开始	未来可扩展。
+三、技术架构
+3.1 后端技术栈
+框架：FastAPI
+
+数据库：SQLAlchemy + SQLite
+
+核心模块：
+
+api/：资产、项目、Key、规则、推荐、执行等路由
+
+core/：执行器、资产工具、Key 监控、路由引擎
+
+models/：数据库模型（资产、Key、统计、规则等）
+
+adapters/：第三方 API 适配器（Qwen、Gemini 等）
+
+3.2 前端技术栈
+框架：React 18 + TypeScript
+
+构建工具：Vite
+
+UI 库：Ant Design 5
+
+路由：React Router 6
+
+状态管理：Zustand
+
+可视化：React Flow
+
+拖拽：react-dnd + react-dnd-html5-backend
+
+HTTP 客户端：axios
+
+3.3 核心数据流
+text
+用户上传工作流 JSON → workflowToFlow 转换为 React Flow 节点/边 → 显示画布
+→ 点击节点 → 打开参数面板（结合规则和统计推荐）
+→ 用户勾选并命名 → 保存到 parameters 状态
+→ 保存资产 → 上报统计 → 更新推荐数据库
+四、项目目录结构（当前实际）
+ComfyForge
+├── .gitignore
+├── .idea
+│   ├── .gitignore
+│   ├── ComfyForge.iml
+│   ├── inspectionProfiles
+│   │   └── profiles_settings.xml
+│   ├── misc.xml
+│   ├── modules.xml
+│   └── vcs.xml
+├── backend
+│   ├── api
+│   │   ├── assets.py
+│   │   ├── keys.py
+│   │   ├── projects.py
+│   │   ├── recommendation_rules.py
+│   │   └── suggestions.py
+│   ├── app.py
+│   ├── core
+│   │   ├── asset_utils.py
+│   │   ├── cloud_comfy_client.py
+│   │   ├── executors
+│   │   │   ├── base.py
+│   │   │   ├── cloud_video_loop.py
+│   │   │   ├── direct_api.py
+│   │   │   ├── local_comfy.py
+│   │   │   ├── real_video_loop.py
+│   │   │   └── video_loop.py
+│   │   ├── key_monitor.py
+│   │   ├── key_tester.py
+│   │   └── router.py
+│   ├── db.py
+│   └── models
+│       ├── __init__.py
+│       ├── api_key.py
+│       ├── asset.py
+│       ├── node_parameter_stat.py
+│       ├── project.py
+│       ├── recommendation_rule.py
+│       └── schemas.py
+├── core
+│   ├── adapters
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── deepseek.py
+│   │   ├── doubao.py
+│   │   ├── factory.py
+│   │   ├── gemini.py
+│   │   ├── grok.py
+│   │   ├── hailuo.py
+│   │   ├── luma.py
+│   │   ├── openai.py
+│   │   └── qwen.py
+│   ├── default_models.json
+│   ├── syncers
+│   │   ├── baseSyncer.py
+│   │   ├── deepseekSyncer.py
+│   │   ├── doubaoSyncer.py
+│   │   ├── geminiSyncer.py
+│   │   ├── grokSyncer.py
+│   │   ├── modelSyncerFactory.py
+│   │   ├── openaiSyncer.py
+│   │   └── qwenSyncer.py
+│   └── utils.py
+├── data
+│   └── comfyforge.db
+├── frontend
+│   ├── forms
+│   │   ├── character_form.py
+│   │   ├── prompt_form.py
+│   │   └── workflow_form.py
+│   ├── gradio_app.py
+│   └── tabs
+│       ├── key_manager.py
+│       └── video_workshop.py
+├── frontend-react
+│   ├── .gitignore
+│   ├── README.md
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── public
+│   │   └── vite.svg
+│   ├── src
+│   │   ├── App.css
+│   │   ├── App.tsx
+│   │   ├── api
+│   │   │   ├── client.ts
+│   │   │   ├── keys.ts
+│   │   │   └── rules.ts
+│   │   ├── assets
+│   │   │   └── react.svg
+│   │   ├── components
+│   │   │   ├── AssetLibrary.tsx
+│   │   │   ├── BulkParamConfigPanel.tsx
+│   │   │   ├── CustomNode.tsx
+│   │   │   ├── Layout.tsx
+│   │   │   ├── ParamConfigPanel.tsx
+│   │   │   └── nodes
+│   │   │       ├── BaseNode.tsx
+│   │   │       ├── GenerateNode.tsx
+│   │   │       ├── LoadAssetNode.tsx
+│   │   │       └── index.ts
+│   │   ├── constants
+│   │   │   └── dnd.ts
+│   │   ├── index.css
+│   │   ├── main.tsx
+│   │   ├── pages
+│   │   │   ├── Assets
+│   │   │   │   ├── Create.tsx
+│   │   │   │   ├── Detail.tsx
+│   │   │   │   ├── Edit.tsx
+│   │   │   │   ├── WorkflowConfig.tsx
+│   │   │   │   └── index.tsx
+│   │   │   ├── Canvas
+│   │   │   │   └── index.tsx
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── KeyManager.tsx
+│   │   │   ├── Keys
+│   │   │   │   └── index.tsx
+│   │   │   ├── Pipeline.tsx
+│   │   │   ├── Rules
+│   │   │   │   └── index.tsx
+│   │   │   └── VideoWorkshop
+│   │   │       └── index.tsx
+│   │   ├── router.tsx
+│   │   ├── stores
+│   │   │   ├── assetLibraryStore.ts
+│   │   │   └── canvasStore.ts
+│   │   ├── types
+│   │   │   ├── asset.ts
+│   │   │   ├── key.ts
+│   │   │   └── rule.ts
+│   │   └── utils
+│   │       ├── nodeRegistry.ts
+│   │       ├── workflowSuggestions.ts
+│   │       └── workflowToFlow.ts
+│   ├── tsconfig.app.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   └── vite.config.ts
+├── package-lock.json
+├── package.json
+├── requirements.txt
+└── run_backend.py五、下一步工作计划（详细）
+Phase 7.2：资产库集成（进行中）
+7.2.1 创建资产库侧边栏组件 AssetLibrary，从后端获取资产，支持类型筛选和搜索。
+
+7.2.2 完善 LoadAssetNode，使其接收拖拽资产，显示预览，动态更新输出端口。
+
+7.2.3 集成到画布页面，测试拖拽流程。
+
+Phase 7.3：Generate 节点完善
+7.3.1 修复下拉框选项显示问题（已基本解决）。
+
+7.3.2 实现 /api/generate 后端接口，调用适配器生成图像/视频/提示词。
+
+7.3.3 前端节点调用接口，展示结果，自动保存资产。
+
+7.3.4 添加动态参数面板（根据模型自动变化）。
+
+Phase 7.4：Preview 节点
+实现通用预览节点，支持图像、视频、文本的展示，多结果自动延伸。
+
+Phase 7.5：Loop 节点
+实现循环节点，可包裹子节点，支持循环次数设置。
+
+Phase 7.6：ComfyUI Engine 节点
+集成工作流模板，动态生成参数面板，执行本地 ComfyUI。
+
+Phase 8：融合与优化
+8.1 仪表盘开发。
+
+8.2 引导式执行界面。
+
+8.3 性能优化与测试。
+
+8.4 文档完善。
+
+六、持久化与协作机制
+项目书保存在 GitHub 仓库根目录 PROJECT_PLAN.md。
+
+版本控制使用 Git，每次重大更新提交并打标签。
+
+后续交流可基于此项目书，并在 GitHub Issues 中记录问题。
+
+新会话开始时，附上本项目书链接和当前进度摘要。
+
+版本历史
+
+v1.0 初始规划
+
+v1.5 阶段性总结（2026.3.1）
+
+v2.0 完整功能实现与智能学习系统（2026.3.2）
+
+v3.0 双模式创作规划（2026.3.2）
+
+v3.1 无限画布 Phase 7.1 完成，Phase 7.2 进行中（2026.3.3）

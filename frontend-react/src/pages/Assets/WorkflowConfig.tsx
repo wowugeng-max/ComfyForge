@@ -9,7 +9,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Button, Card, message, Input, List, Space, Popconfirm, Row, Col, Typography, Select, Tag, Divider } from 'antd';
 import { DeleteOutlined, EyeOutlined, UploadOutlined, ArrowLeftOutlined, SaveOutlined, GlobalOutlined, ApiOutlined } from '@ant-design/icons';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { workflowToFlow } from '../../utils/workflowToFlow';
 import { CustomNode } from '../../components/CustomNode';
 import { ParamConfigPanel } from '../../components/ParamConfigPanel';
@@ -32,6 +32,8 @@ export default function WorkflowConfig() {
   const isEditMode = mode === 'edit' || !mode;
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnUrl = searchParams.get('returnUrl') || '/assets';
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
@@ -222,11 +224,13 @@ export default function WorkflowConfig() {
         const res = await apiClient.post('/assets/', payload);
         savedId = res.data.id;
         message.success('🎉 工作流铸造成功');
-        navigate(`/assets/workflow-config/edit/${savedId}`, { replace: true });
       }
 
       const stats = extractStatsFromParameters(parameters, workflowJson);
       reportStats(stats).catch(e => console.error('上报统计失败', e));
+
+      // 保存后跳回来源页
+      navigate(returnUrl);
     } catch (error) {
       message.error('保存失败');
     } finally {
@@ -245,14 +249,14 @@ export default function WorkflowConfig() {
       {/* ================= 🌟 顶部全局操作条 ================= */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <Space size="middle">
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/assets')} type="text" style={{ fontSize: 16, color: '#64748b' }} />
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(returnUrl)} type="text" style={{ fontSize: 16, color: '#64748b' }} />
           <Title level={4} style={{ margin: 0, color: '#0f172a' }}>
             {isViewMode ? '查看工作流配置' : (id ? '编辑工作流配置' : '新建工作流配置')}
           </Title>
           <Tag color="purple" style={{ margin: 0, borderRadius: 16, border: 'none' }}><ApiOutlined /> 蓝图模式</Tag>
         </Space>
         <Space>
-          <Button onClick={() => navigate('/assets')}>返回</Button>
+          <Button onClick={() => navigate(returnUrl)}>返回</Button>
           {!isViewMode && (
             <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={handleSaveAsset}>
               固化保存
